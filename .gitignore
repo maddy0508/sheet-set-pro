@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+.env
+.env.*
+!.env.example
+
+# Confidential project documents — must never be published to this public repository
+SSP-0*.txt
+SSP-0*.md
+.openhands/
+
+*.tsbuildinfo
