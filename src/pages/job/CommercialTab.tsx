@@ -20,7 +20,7 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
   const [validUntil, setValidUntil] = useState(() => {
     const date = new Date();
     date.setDate(date.getDate() + 30);
-    return date.toISOString().slice(1, 10);
+    return date.toISOString().slice(0, 10);
   });
 
   const margin = Number(marginBp) || 0;
@@ -44,16 +44,26 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
     sellLines.map((line) => ({ qtyMicro: line.qtyMicro, unitPriceCents: line.unitPriceCents })),
     { gstRateBp: company.gstRateBp, gstApplied: company.gstRegistered === true },
   );
-  const sellSubtotal = materialTotals.subtotalCents + labourCents;
-  const gstCents = company.gstRegistered === true ? Math.round((sellSubtotal * company.gstRateBp) / 10_000) : 0;
+
+  const labourLine: DocLine = {
+    key: 'labour',
+    description: 'Installation labour',
+    qtyMicro: areaM2Micro,
+    unit: 'm²',
+    unitPriceCents: company.labourRateCentsPerM2,
+    isPlaceholder: false,
+  };
+  const pricedLines = [...sellLines, labourLine];
+  const allTotals = computeTotals(
+    pricedLines.map((line) => ({ qtyMicro: line.qtyMicro, unitPriceCents: line.unitPriceCents })),
+    { gstRateBp: company.gstRateBp, gstApplied: company.gstRegistered === true },
+  );
+  const sellSubtotal = allTotals.subtotalCents;
+  const gstCents = allTotals.gstCents;
 
   const latestEstimate = estimates[0];
   const latestQuote = quotes[0];
   const previewQuote = quotes.find((q) => q.id === previewQuoteId) ?? null;
-  const previewLineSum = previewQuote
-    ? previewQuote.lines.reduce((sum, line) => sum + Math.round((line.qtyMicro * line.unitPriceCents) / 1_000_000), 0)
-    : 0;
-  const previewLabour = previewQuote ? previewQuote.totals.subtotalCents - previewLineSum : 0;
 
   return (
     <div className="grid" style={{ gap: 16 }}>
@@ -79,7 +89,7 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
             <button
               type="button"
               className="btn btn-primary btn-sm"
-              onClick={() => actions.saveEstimate(job.id, sellLines, margin, labourCents)}
+              onClick={() => actions.saveEstimate(job.id, pricedLines, margin, 0)}
               disabled={sellLines.length === 0}
             >
               Save revision
@@ -104,7 +114,7 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {sellLines.map((line, index) => (
+                  {pricedLines.map((line, index) => (
                     <tr key={line.key}>
                       <td>
                         <span className="cell-strong">{line.description}</span>
@@ -114,15 +124,9 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
                         {(line.qtyMicro / 1_000_000).toLocaleString('en-AU', { maximumFractionDigits: 2 })} {line.unit}
                       </td>
                       <td className="num">{formatCents(line.unitPriceCents)}</td>
-                      <td className="num">{formatCents(materialTotals.lineAmountsCents[index])}</td>
+                      <td className="num">{formatCents(allTotals.lineAmountsCents[index])}</td>
                     </tr>
                   ))}
-                  <tr>
-                    <td className="cell-strong">Installation labour</td>
-                    <td className="num">{formatAreaM2(computation.areaMm2)}</td>
-                    <td className="num">{formatCents(company.labourRateCentsPerM2)}/m²</td>
-                    <td className="num">{formatCents(labourCents)}</td>
-                  </tr>
                 </tbody>
               </table>
             </div>
@@ -316,12 +320,6 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
                     <td className="num">{formatCents(Math.round((line.qtyMicro * line.unitPriceCents) / 1_000_000))}</td>
                   </tr>
                 ))}
-                <tr>
-                  <td>Installation labour</td>
-                  <td className="num">{formatAreaM2(computation.areaMm2)}</td>
-                  <td className="num">{formatCents(company.labourRateCentsPerM2)}/m²</td>
-                  <td className="num">{formatCents(previewLabour)}</td>
-                </tr>
               </tbody>
             </table>
 

@@ -77,6 +77,7 @@ export function formatMm(valueMm: number): string {
 }
 
 export function formatCents(cents: number, currency = 'AUD'): string {
+  if (!Number.isFinite(cents)) return '—';
   return new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format(cents / 100);
 }
 
