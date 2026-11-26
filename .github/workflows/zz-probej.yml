@@ -1,0 +1,11 @@
+name: ProbeJ
+on: [push]
+jobs:
+  probej:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: echo ok
