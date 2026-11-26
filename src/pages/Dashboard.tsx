@@ -6,7 +6,7 @@ import { Card, EmptyState, JobStatusBadge, PageHead, Stat, Badge, Notice } from 
 import { IconAlert, IconArrowRight, IconPlus, IconSpark } from '@/ui/icons';
 
 export function Dashboard() {
-  const { state, actions } = useStore();
+  const { state, actions, sync } = useStore();
   const navigate = useNavigate();
 
   const activeJobs = state.jobs.filter((j) => j.status !== 'paid' && j.status !== 'lost');
@@ -234,12 +234,13 @@ export function Dashboard() {
               <dt>Synthetic</dt>
               <dd>{state.jobs.filter((j) => j.sourceType !== 'REAL').length} jobs</dd>
               <dt>Storage</dt>
-              <dd className="small">This browser only</dd>
+              <dd className="small">{sync.mode === 'remote' ? 'Supabase · Postgres' : 'This browser only'}</dd>
             </dl>
             <hr className="divider" />
             <div className="small faint" style={{ lineHeight: 1.55 }}>
-              Development workspace: records are kept in this browser, not in a shared database. Nothing here is
-              presented as verified manufacturer data.
+              {sync.mode === 'remote'
+                ? 'Records are stored in this workspace’s database and shared with its signed-in members. Row level security restricts access to members. Nothing here is presented as verified manufacturer data.'
+                : 'Development workspace: records are kept in this browser, not in a shared database. Nothing here is presented as verified manufacturer data.'}
             </div>
           </Card>
         </div>

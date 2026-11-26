@@ -3,6 +3,7 @@ import type { ComponentType } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { IconCatalogue, IconCustomers, IconDashboard, IconJobs, IconMenu, IconPlus, IconSettings, LogoMark } from '@/ui/icons';
 import { useStore } from '@/data/store';
+import { useAuth } from '@/auth/AuthGate';
 
 type NavItem = { to: string; label: string; icon: ComponentType<{ size?: number; className?: string }>; end?: boolean };
 
@@ -35,10 +36,33 @@ function crumbsFor(pathname: string, jobs: { id: string; jobNumber: string; titl
   return crumbs;
 }
 
+type SyncChipProps = {
+  sync: { status: 'loading' | 'ready' | 'saving' | 'error'; lastSavedAt: string | null };
+};
+
+function SyncChip({ sync }: SyncChipProps) {
+  const label =
+    sync.status === 'saving'
+      ? 'Saving…'
+      : sync.status === 'error'
+        ? 'Save failed'
+        : sync.lastSavedAt
+          ? `Saved ${new Date(sync.lastSavedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}`
+          : 'Connected';
+
+  return (
+    <span className={`sync-chip sync-chip-${sync.status}`} title="Records are stored in Supabase">
+      <span className="sync-dot" />
+      {label}
+    </span>
+  );
+}
+
 export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
-  const { state } = useStore();
+  const { state, sync } = useStore();
+  const auth = useAuth();
   const crumbs = crumbsFor(location.pathname, state.jobs);
 
   return (
@@ -88,7 +112,7 @@ export function AppShell() {
           <strong>{state.company.displayName}</strong>
           {state.company.gstRegistered === null ? 'GST status not confirmed' : state.company.gstRegistered ? 'GST registered' : 'Not GST registered'}
           <br />
-          Local workspace · data stored on this device
+          {auth.mode === 'local' ? 'Local workspace · data stored on this device' : `Cloud workspace · ${auth.email ?? 'signed in'}`}
         </div>
       </aside>
 
@@ -113,6 +137,12 @@ export function AppShell() {
             </nav>
           </div>
           <div className="topbar-actions">
+            {sync.mode === 'remote' && <SyncChip sync={sync} />}
+            {auth.mode === 'remote' && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void auth.signOut()}>
+                Sign out
+              </button>
+            )}
             <Link to="/jobs?new=1" className="btn btn-primary btn-sm">
               <IconPlus size={14} />
               New job
@@ -121,6 +151,22 @@ export function AppShell() {
         </header>
 
         <main className="content">
+          {sync.error && (
+            <div className="notice notice-danger sync-error" role="alert">
+              <div>
+                <strong>Not saved</strong>
+                <p>{sync.error}</p>
+              </div>
+              <div className="sync-error-actions">
+                <button type="button" className="btn btn-ghost btn-sm" onClick={sync.dismissError}>
+                  Dismiss
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={sync.retry}>
+                  Reload from database
+                </button>
+              </div>
+            </div>
+          )}
           <Outlet />
         </main>
       </div>

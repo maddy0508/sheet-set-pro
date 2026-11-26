@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   ActivityEvent,
@@ -19,6 +19,8 @@ import type {
   Quote,
 } from './types';
 import { createInitialState } from './seed';
+import { isSupabaseConfigured } from '@/lib/supabase';
+import { loadWorkspace, persistStateChange } from './remote';
 import { computeTotals } from '@/domain/pricing';
 import { fingerprint } from '@/domain/units';
 import type { EvidenceKind, FlashingKind, MeasurementGrade, SourceType } from '@/domain/types';
@@ -104,21 +106,135 @@ export type Actions = {
   loadSampleJob: () => void;
 };
 
-type StoreValue = { state: AppState; actions: Actions };
+export type SyncState = {
+  mode: 'local' | 'remote';
+  status: 'loading' | 'ready' | 'saving' | 'error';
+  error: string | null;
+  lastSavedAt: string | null;
+};
+
+type StoreValue = {
+  state: AppState;
+  actions: Actions;
+  sync: SyncState & { retry: () => void; dismissError: () => void };
+};
+
 const StoreContext = createContext<StoreValue | null>(null);
 
+/**
+ * A remote workspace starts empty: showing example data before the database has
+ * answered would be indistinguishable from real records.
+ */
+function emptyState(): AppState {
+  const base = createInitialState();
+  return {
+    ...base,
+    company: { ...base.company, id: '' },
+    catalogue: [],
+    activity: [],
+  };
+}
+
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppState>(() => load());
+  const [state, applyState] = useState<AppState>(() => (isSupabaseConfigured ? emptyState() : load()));
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  const [sync, setSync] = useState<SyncState>(() => ({
+    mode: isSupabaseConfigured ? 'remote' : 'local',
+    status: isSupabaseConfigured ? 'loading' : 'ready',
+    error: null,
+    lastSavedAt: null,
+  }));
+
+  const [reloadToken, setReloadToken] = useState(0);
+  const writeSequence = useRef(0);
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
+
   useEffect(() => {
+    if (isSupabaseConfigured) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
       // Storage unavailable or full: the session still works, it is simply not persisted.
     }
   }, [state]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let cancelled = false;
+    setSync((current) => ({ ...current, status: 'loading', error: null }));
+
+    loadWorkspace()
+      .then((loaded) => {
+        if (cancelled) return;
+        stateRef.current = loaded;
+        applyState(loaded);
+        setSync((current) => ({ ...current, status: 'ready', error: null }));
+        // A browser that previously ran in local mode still holds a device-only copy.
+        // Once the shared workspace has answered, that copy is stale and unmanaged.
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch {
+          // Storage may be unavailable; nothing depends on this cleanup.
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setSync((current) => ({
+          ...current,
+          status: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  /**
+   * Applies a change immediately, then writes it. A rejected write restores the
+   * previous state and says so: the operator never sees a save that did not happen.
+   */
+  const commit = useCallback((updater: (previous: AppState) => AppState) => {
+    const before = stateRef.current;
+    const after = updater(before);
+    if (after === before) return;
+
+    stateRef.current = after;
+    applyState(after);
+
+    if (!isSupabaseConfigured) return;
+
+    const ticket = ++writeSequence.current;
+    setSync((current) => ({ ...current, status: 'saving', error: null }));
+
+    writeQueue.current = writeQueue.current
+      .then(() => persistStateChange(before, after))
+      .then(() => {
+        if (ticket !== writeSequence.current) return;
+        setSync((current) => ({ ...current, status: 'ready', lastSavedAt: new Date().toISOString() }));
+      })
+      .catch((error: unknown) => {
+        if (ticket === writeSequence.current) {
+          stateRef.current = before;
+          applyState(before);
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        setSync((current) => ({ ...current, status: 'error', error: message }));
+        // A write can fail after some tables were written; the database is the authority.
+        loadWorkspace()
+          .then((loaded) => {
+            stateRef.current = loaded;
+            applyState(loaded);
+          })
+          .catch(() => undefined);
+      });
+  }, []);
+
+  const retry = useCallback(() => setReloadToken((token) => token + 1), []);
+  const dismissError = useCallback(() => setSync((current) => ({ ...current, status: 'ready', error: null })), []);
 
   const actions = useMemo<Actions>(() => {
     const nextDocNumber = (prefix: string, existing: { number: string }[]) => {
@@ -129,7 +245,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
     return {
       updateCompany: (patch) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           company: { ...prev.company, ...patch },
           activity: withActivity(prev, 'company.updated', 'company', prev.company.id, 'Company settings updated.'),
@@ -149,7 +265,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           createdAt: existing?.createdAt ?? nowIso(),
           updatedAt: nowIso(),
         };
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           customers: existing ? prev.customers.map((c) => (c.id === customer.id ? customer : c)) : [customer, ...prev.customers],
           activity: withActivity(prev, existing ? 'customer.updated' : 'customer.created', 'customer', customer.id, customer.name),
@@ -157,12 +273,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return customer;
       },
 
-      deleteCustomer: (id) =>
-        setState((prev) => ({
+      deleteCustomer: (id) => {
+        const linkedJobs = stateRef.current.jobs.filter((job) => job.customerId === id);
+        if (linkedJobs.length > 0) {
+          setSync((current) => ({
+            ...current,
+            status: 'error',
+            error: `This customer has ${linkedJobs.length} job${linkedJobs.length === 1 ? '' : 's'} on record. Jobs keep their customer, so remove or reassign those jobs first.`,
+          }));
+          return;
+        }
+        commit((prev) => ({
           ...prev,
           customers: prev.customers.filter((c) => c.id !== id),
           activity: withActivity(prev, 'customer.deleted', 'customer', id, 'Customer removed.'),
-        })),
+        }));
+      },
 
       saveJob: (input) => {
         const existing = input.id ? stateRef.current.jobs.find((j) => j.id === input.id) : undefined;
@@ -182,7 +308,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           createdAt: existing?.createdAt ?? nowIso(),
           updatedAt: nowIso(),
         };
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           jobs: existing ? prev.jobs.map((j) => (j.id === job.id ? job : j)) : [job, ...prev.jobs],
           activity: withActivity(prev, existing ? 'job.updated' : 'job.created', 'job', job.id, `${job.jobNumber} · ${job.title}`),
@@ -191,23 +317,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
 
       updateJob: (id, patch) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           jobs: prev.jobs.map((j) => (j.id === id ? { ...j, ...patch, updatedAt: nowIso() } : j)),
         })),
 
       addPlane: (jobId, plane) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           planes: [...prev.planes, { ...plane, id: uid(), jobId }],
           activity: withActivity(prev, 'roof.plane.added', 'job', jobId, `Plane ${plane.ref} captured.`),
         })),
 
       updatePlane: (id, patch) =>
-        setState((prev) => ({ ...prev, planes: prev.planes.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
+        commit((prev) => ({ ...prev, planes: prev.planes.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
 
       deletePlane: (id) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           planes: prev.planes.filter((p) => p.id !== id),
           activity: withActivity(
@@ -220,7 +346,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         })),
 
       upsertFlashing: (jobId, kind, lengthMm) =>
-        setState((prev) => {
+        commit((prev) => {
           const existing = prev.flashings.find((f) => f.jobId === jobId && f.kind === kind);
           if (existing) {
             return {
@@ -231,7 +357,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           return { ...prev, flashings: [...prev.flashings, { id: uid(), jobId, kind, lengthMm, source: 'ENTERED' }] };
         }),
 
-      deleteFlashing: (id) => setState((prev) => ({ ...prev, flashings: prev.flashings.filter((f) => f.id !== id) })),
+      deleteFlashing: (id) => commit((prev) => ({ ...prev, flashings: prev.flashings.filter((f) => f.id !== id) })),
 
       addEvidence: (jobId, input) => {
         const evidence: Evidence = {
@@ -244,7 +370,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           isVerified: input.isVerified,
           createdAt: nowIso(),
         };
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           evidence: [evidence, ...prev.evidence],
           activity: withActivity(prev, 'measurement.evidence.added', 'job', jobId, `${input.sourceKind} evidence recorded.`),
@@ -253,7 +379,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
 
       addMeasurement: (jobId, input) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           measurements: [
             {
@@ -274,7 +400,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         })),
 
       deactivateMeasurement: (id) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           measurements: prev.measurements.map((m) => (m.id === id ? { ...m, isActive: false } : m)),
           activity: withActivity(
@@ -287,7 +413,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         })),
 
       saveProfile: (profile) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           catalogue: prev.catalogue.some((p) => p.id === profile.id)
             ? prev.catalogue.map((p) => (p.id === profile.id ? profile : p))
@@ -317,7 +443,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           createdAt: nowIso(),
           updatedAt: nowIso(),
         };
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           estimates: [estimate, ...prev.estimates],
           activity: withActivity(prev, 'estimate.saved', 'estimate', estimate.id, `Estimate revision ${estimate.revision}.`),
@@ -326,7 +452,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
 
       issueQuote: (jobId, estimateId, validUntil) =>
-        setState((prev) => {
+        commit((prev) => {
           const estimate = prev.estimates.find((e) => e.id === estimateId);
           if (!estimate) return prev;
           const gstApplied = prev.company.gstRegistered === true;
@@ -362,7 +488,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }),
 
       setQuoteStatus: (quoteId, status) =>
-        setState((prev) => {
+        commit((prev) => {
           const quote = prev.quotes.find((q) => q.id === quoteId);
           if (!quote || quote.status === 'draft') return prev;
           return {
@@ -376,7 +502,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }),
 
       createInvoice: (jobId, quoteId) =>
-        setState((prev) => {
+        commit((prev) => {
           const quote = prev.quotes.find((q) => q.id === quoteId);
           const invoice: Invoice = {
             id: uid(),
@@ -402,7 +528,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }),
 
       issueInvoice: (invoiceId) =>
-        setState((prev) => {
+        commit((prev) => {
           const invoice = prev.invoices.find((i) => i.id === invoiceId);
           if (!invoice || invoice.status !== 'draft') return prev;
           const gstApplied = prev.company.gstRegistered === true;
@@ -429,7 +555,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }),
 
       voidInvoice: (invoiceId, reason) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           invoices: prev.invoices.map((i) =>
             i.id === invoiceId && i.status === 'issued' ? { ...i, status: 'voided', voidReason: reason } : i,
@@ -450,7 +576,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           idempotencyKey,
           createdAt: nowIso(),
         };
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           payments: [payment, ...prev.payments],
           activity: withActivity(prev, 'payment.recorded', 'payment', payment.id, 'Payment recorded.'),
@@ -469,7 +595,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         if (allocatedToPayment + amountCents > payment.amountCents) return { ok: false, message: 'Allocation exceeds the payment amount.' };
         if (allocatedToInvoice + amountCents > invoice.totals.totalCents) return { ok: false, message: 'Allocation exceeds the invoice total.' };
         const allocation: Allocation = { id: uid(), paymentId, invoiceId, amountCents, createdAt: nowIso() };
-        setState((prev) => {
+        commit((prev) => {
           const fullyPaid =
             prev.allocations.filter((a) => a.invoiceId === invoiceId).reduce((s, a) => s + a.amountCents, 0) + amountCents >=
             invoice.totals.totalCents;
@@ -484,15 +610,26 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
 
       recordSnapshot: (snapshot) =>
-        setState((prev) => ({
+        commit((prev) => ({
           ...prev,
           snapshots: [{ ...snapshot, id: uid(), createdAt: nowIso() }, ...prev.snapshots].slice(0, 200),
         })),
 
-      resetWorkspace: () => setState(createInitialState()),
+      resetWorkspace: () => {
+        if (isSupabaseConfigured) {
+          setSync((current) => ({
+            ...current,
+            status: 'error',
+            error:
+              'Resetting is disabled for a shared workspace: issued documents, measurement evidence and payment history are kept permanently. Remove individual records instead.',
+          }));
+          return;
+        }
+        commit(() => createInitialState());
+      },
 
       loadSampleJob: () =>
-        setState((prev) => {
+        commit((prev) => {
           const customerId = uid();
           const jobId = uid();
           const stamp = nowIso();
@@ -545,9 +682,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           };
         }),
     };
-  }, []);
+  }, [commit]);
 
-  const value = useMemo(() => ({ state, actions }), [state, actions]);
+  const value = useMemo(
+    () => ({ state, actions, sync: { ...sync, retry, dismissError } }),
+    [state, actions, sync, retry, dismissError],
+  );
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 

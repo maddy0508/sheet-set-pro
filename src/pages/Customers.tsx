@@ -161,7 +161,7 @@ export function Customers() {
                           type="button"
                           className="btn btn-ghost btn-sm"
                           onClick={() => {
-                            if (confirm(`Remove ${customer.name}? Jobs already created keep their record.`)) {
+                            if (confirm(`Remove ${customer.name}? This is only possible when the customer has no jobs.`)) {
                               actions.deleteCustomer(customer.id);
                             }
                           }}

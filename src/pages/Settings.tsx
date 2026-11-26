@@ -5,7 +5,7 @@ import { Badge, Card, Field, Notice, PageHead, SelectInput, TextInput, UnitInput
 import { IconAlert } from '@/ui/icons';
 
 export function SettingsPage() {
-  const { state, actions } = useStore();
+  const { state, actions, sync } = useStore();
   const company = state.company;
   const [draft, setDraft] = useState({
     displayName: company.displayName,
@@ -168,8 +168,9 @@ export function SettingsPage() {
         <div className="grid" style={{ gap: 16 }}>
           <Card title="Storage" subtitle="Where this workspace lives">
             <div className="small muted" style={{ lineHeight: 1.6 }}>
-              This build keeps records in this browser only. It is a development workspace, not a shared database:
-              data is not visible to another device and is not backed up.
+              {sync.mode === 'remote'
+                ? 'Records are stored in this workspace’s Supabase Postgres database and reachable from any signed-in device. Access is limited to workspace members by row level security; anonymous requests are refused.'
+                : 'This build keeps records in this browser only. It is a development workspace, not a shared database: data is not visible to another device and is not backed up.'}
             </div>
             <hr className="divider" />
             <dl className="kv">
