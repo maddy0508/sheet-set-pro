@@ -1,0 +1,10 @@
+name: ProbeF
+on: [push]
+jobs:
+  probef:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - run: echo ok

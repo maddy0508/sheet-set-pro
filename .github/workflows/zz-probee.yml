@@ -1,0 +1,7 @@
+name: ProbeE
+on: [push]
+jobs:
+  probee:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo ok
