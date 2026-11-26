@@ -3,9 +3,11 @@ import { useStore } from '@/data/store';
 import { formatCents } from '@/domain/units';
 import { Badge, Card, EmptyState, Field, Modal, Notice, SelectInput, Stat, TextInput, UnitInput } from '@/ui';
 import { IconAlert, IconCash, IconDoc } from '@/ui/icons';
+import { invoiceDocument } from '@/lib/document';
+import { downloadPdf } from '@/lib/pdf';
 import type { JobTabProps } from './types';
 
-export function BillingTab({ job }: JobTabProps) {
+export function BillingTab({ job, profile }: JobTabProps) {
   const { state, actions } = useStore();
   const invoices = state.invoices.filter((i) => i.jobId === job.id);
   const payments = state.payments.filter((p) => p.jobId === job.id);
@@ -23,6 +25,7 @@ export function BillingTab({ job }: JobTabProps) {
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [feedback, setFeedback] = useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState('');
   const [allocate, setAllocate] = useState({ paymentId: '', invoiceId: '', amount: '' });
 
   const allocationSums = useMemo(() => {
@@ -41,6 +44,27 @@ export function BillingTab({ job }: JobTabProps) {
   const outstandingTotal = invoicedTotal - paidTotal;
   const previewInvoice = invoices.find((i) => i.id === previewId) ?? null;
   const acceptedQuote = quotes.find((q) => q.status === 'accepted') ?? null;
+
+  const saveInvoicePdf = (invoiceId: string) => {
+    const invoice = invoices.find((candidate) => candidate.id === invoiceId);
+    if (!invoice) return;
+    const allocated = allocationSums.byInvoice.get(invoice.id) ?? 0;
+    const balanceCents =
+      invoice.status === 'voided' ? 0 : invoice.status === 'issued' ? invoice.totals.totalCents - allocated : invoice.totals.totalCents;
+    setPdfError('');
+    downloadPdf(
+      invoiceDocument({
+        invoice,
+        job,
+        customer,
+        company,
+        catalogueVerified: profile?.verificationState === 'VERIFIED',
+        balanceCents,
+      }),
+    ).catch((error: unknown) => {
+      setPdfError(error instanceof Error ? error.message : 'The PDF could not be produced.');
+    });
+  };
 
   const recordPayment = () => {
     const amount = Math.round(Number(paymentDraft.amount) * 100);
@@ -76,6 +100,12 @@ export function BillingTab({ job }: JobTabProps) {
 
   return (
     <div className="grid" style={{ gap: 16 }}>
+      {pdfError && (
+        <Notice tone="danger" icon={<IconAlert />}>
+          The document could not be produced: {pdfError}
+        </Notice>
+      )}
+
       <div className="grid grid-4">
         <Stat label="Invoiced" value={formatCents(invoicedTotal)} hint={`${issuedInvoices.length} issued`} />
         <Stat label="Received" value={formatCents(paidTotal)} hint={`${payments.length} payments`} />
@@ -164,6 +194,9 @@ export function BillingTab({ job }: JobTabProps) {
                             Preview
                           </button>
                         )}
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => saveInvoicePdf(invoice.id)}>
+                          PDF
+                        </button>
                         {invoice.status === 'issued' && (
                           <button
                             type="button"
@@ -324,9 +357,17 @@ export function BillingTab({ job }: JobTabProps) {
         onClose={() => setPreviewId(null)}
         wide
         footer={
-          <button type="button" className="btn btn-secondary" onClick={() => setPreviewId(null)}>
-            Close
-          </button>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-secondary" onClick={() => setPreviewId(null)}>
+              Close
+            </button>
+            {previewInvoice && (
+              <button type="button" className="btn btn-primary" onClick={() => saveInvoicePdf(previewInvoice.id)}>
+                <IconDoc size={14} />
+                Download PDF
+              </button>
+            )}
+          </div>
         }
       >
         {previewInvoice && (

@@ -5,6 +5,8 @@ import { formatAreaM2, formatCents, MM_PER_M } from '@/domain/units';
 import type { DocLine } from '@/data/types';
 import { Badge, Card, Field, Modal, Notice, Stat, UnitInput } from '@/ui';
 import { IconAlert, IconCheck, IconDoc } from '@/ui/icons';
+import { quoteDocument } from '@/lib/document';
+import { downloadPdf } from '@/lib/pdf';
 import type { JobTabProps } from './types';
 
 export function CommercialTab({ job, computation, profile }: JobTabProps) {
@@ -16,6 +18,7 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
 
   const [marginBp, setMarginBp] = useState(String(company.defaultMarginBp));
   const [showPreview, setShowPreview] = useState(false);
+  const [pdfError, setPdfError] = useState('');
   const [previewQuoteId, setPreviewQuoteId] = useState<string | null>(null);
   const [validUntil, setValidUntil] = useState(() => {
     const date = new Date();
@@ -60,6 +63,16 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
   );
   const sellSubtotal = allTotals.subtotalCents;
   const gstCents = allTotals.gstCents;
+
+  const catalogueVerified = profile?.verificationState === 'VERIFIED';
+  const saveQuotePdf = (quoteId: string) => {
+    const quote = quotes.find((candidate) => candidate.id === quoteId);
+    if (!quote) return;
+    setPdfError('');
+    downloadPdf(quoteDocument({ quote, job, customer, company, catalogueVerified })).catch((error: unknown) => {
+      setPdfError(error instanceof Error ? error.message : 'The PDF could not be produced.');
+    });
+  };
 
   const latestEstimate = estimates[0];
   const latestQuote = quotes[0];
@@ -189,6 +202,12 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
         </div>
       </div>
 
+      {pdfError && (
+        <Notice tone="danger" icon={<IconAlert />}>
+          The document could not be produced: {pdfError}
+        </Notice>
+      )}
+
       <Card title="Quotes" subtitle="Customer-facing offers" tight>
         {quotes.length === 0 ? (
           <div className="empty">
@@ -236,6 +255,9 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
                       >
                         Preview
                       </button>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => saveQuotePdf(quote.id)}>
+                        PDF
+                      </button>
                       {quote.status === 'issued' && (
                         <>
                           <button type="button" className="btn btn-ghost btn-sm" onClick={() => actions.setQuoteStatus(quote.id, 'accepted')}>
@@ -268,9 +290,17 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
         onClose={() => setShowPreview(false)}
         wide
         footer={
-          <button type="button" className="btn btn-secondary" onClick={() => setShowPreview(false)}>
-            Close
-          </button>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-secondary" onClick={() => setShowPreview(false)}>
+              Close
+            </button>
+            {previewQuote && (
+              <button type="button" className="btn btn-primary" onClick={() => saveQuotePdf(previewQuote.id)}>
+                <IconDoc size={14} />
+                Download PDF
+              </button>
+            )}
+          </div>
         }
       >
         {previewQuote && (

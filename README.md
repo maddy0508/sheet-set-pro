@@ -30,7 +30,8 @@ npm run typecheck
 | Validation | Blocking and warning checks incl. overlap, pitch range, minimum pitch |
 | Sheet layout | Courses from effective cover width, splitting against maximum length |
 | Materials | BOM grouped by cut length, flashing runs, fastener rule, CSV export when qualified |
-| Commercial | Estimate revisions with margin, quote issue and preview, acceptance |
+| Commercial | Estimate revisions with margin, quote issue and preview, acceptance, PDF download |
+| Documents | Quote and invoice PDFs with the business block, GST treatment, provenance notes and a content fingerprint |
 | Billing | Invoice draft/issue/void, payments with idempotency, allocation, balances |
 | Activity | Append-only event trail per job |
 
