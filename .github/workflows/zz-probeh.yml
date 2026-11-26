@@ -1,8 +1,0 @@
-name: ProbeH
-on: [push]
-jobs:
-  probeh:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: echo ok
