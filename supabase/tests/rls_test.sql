@@ -252,6 +252,24 @@ select tests.expect_error(
   'catalogue_unverified_source'
 );
 
+-- Labour cost is an optional internal cost basis ---------------------------
+select tests.expect_count(
+  'the labour cost basis starts unset, so profit is unknown rather than zero',
+  $q$select 1 from public.businesses where id = '00000000-0000-4000-8000-000000000001' and labour_cost_cents_per_m2 is null$q$,
+  1
+);
+update public.businesses set labour_cost_cents_per_m2 = 1800 where id = '00000000-0000-4000-8000-000000000001';
+select tests.expect_count(
+  'a member can record the labour cost basis',
+  $q$select 1 from public.businesses where labour_cost_cents_per_m2 = 1800$q$,
+  1
+);
+select tests.expect_error(
+  'a negative labour cost is rejected',
+  $q$update public.businesses set labour_cost_cents_per_m2 = -1 where id = '00000000-0000-4000-8000-000000000001'$q$,
+  'violates check constraint'
+);
+
 reset role;
 
 -- A different business sees only its own records ----------------------------

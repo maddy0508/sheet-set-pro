@@ -14,6 +14,8 @@ export type Company = {
   email: string | null;
   phone: string | null;
   labourRateCentsPerM2: number;
+  /** What an installed square metre costs the business. Null until the operator records it. */
+  labourCostCentsPerM2: number | null;
   defaultMarginBp: number;
 };
 

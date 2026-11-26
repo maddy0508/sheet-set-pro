@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useStore } from '@/data/store';
 import { computeJob } from '@/lib/jobCalc';
+import { jobCosting } from '@/lib/costing';
 import { formatAreaM2, formatCents, formatMm } from '@/domain/units';
 import { Badge, Card, Field, JobStatusBadge, Notice, SelectInput, SourceBadge, Stat, Tabs, TextArea } from '@/ui';
 import { IconAlert, IconArrowLeft, IconCheck } from '@/ui/icons';
@@ -57,7 +58,15 @@ export function JobWorkspace() {
   const payments = state.payments.filter((p) => p.jobId === job.id);
   const jobActivity = state.activity.filter((event) => event.subjectId === job.id || (event.subjectType === 'job' && event.subjectId === job.id));
 
-  const tabProps = { job, planes, flashings, evidence, measurements, profile, computation };
+  const costing = jobCosting({
+    areaMm2: computation.areaMm2,
+    bomLines: computation.bom.lines,
+    invoices,
+    allocations: state.allocations,
+    company: state.company,
+  });
+
+  const tabProps = { job, planes, flashings, evidence, measurements, profile, computation, costing };
 
   const nextStep = (() => {
     if (planes.length === 0) return { label: 'Capture the roof', tab: 'roof' as TabId, detail: 'Draw or enter the roof planes to begin.' };
@@ -274,6 +283,35 @@ export function JobWorkspace() {
                     <dt>Payments</dt>
                     <dd>{payments.length}</dd>
                   </dl>
+                </Card>
+
+                <Card title="Job costing" subtitle="Cost against revenue, excluding GST">
+                  <dl className="kv">
+                    <dt>Material cost</dt>
+                    <dd>{formatCents(costing.materialCostCents)}</dd>
+                    <dt>Labour cost</dt>
+                    <dd>{costing.labourCostCents === null ? <span className="faint">Rate not set</span> : formatCents(costing.labourCostCents)}</dd>
+                    <dt>Revenue</dt>
+                    <dd>{formatCents(costing.revenueCents)}</dd>
+                    <dt>Gross profit</dt>
+                    <dd>
+                      {costing.profitCents === null ? (
+                        <span className="faint">Unknown</span>
+                      ) : (
+                        <span style={{ fontWeight: 700 }}>
+                          {formatCents(costing.profitCents)}
+                          {costing.marginBp !== null && <span className="faint small"> · {(costing.marginBp / 100).toFixed(1)}%</span>}
+                        </span>
+                      )}
+                    </dd>
+                  </dl>
+                  {costing.caveats.length > 0 && (
+                    <div className="small faint" style={{ marginTop: 10, lineHeight: 1.5 }}>
+                      {costing.caveats.map((caveat) => (
+                        <div key={caveat}>· {caveat}</div>
+                      ))}
+                    </div>
+                  )}
                 </Card>
               </div>
             </div>

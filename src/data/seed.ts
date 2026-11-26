@@ -67,6 +67,7 @@ export function createInitialState(): AppState {
       email: null,
       phone: null,
       labourRateCentsPerM2: 4500,
+      labourCostCentsPerM2: null,
       defaultMarginBp: 2500,
     },
     customers: [],

@@ -569,6 +569,7 @@ export function companyToRow(company: AppState['company']): Row {
     email: company.email,
     phone: company.phone,
     labour_rate_cents_per_m2: company.labourRateCentsPerM2,
+    labour_cost_cents_per_m2: company.labourCostCentsPerM2,
     default_margin_bp: company.defaultMarginBp,
   };
 }
@@ -586,6 +587,7 @@ export function companyFromRow(row: Row): AppState['company'] {
     email: textOrNull(row.email),
     phone: textOrNull(row.phone),
     labourRateCentsPerM2: num(row.labour_rate_cents_per_m2),
+    labourCostCentsPerM2: intOrNull(row.labour_cost_cents_per_m2),
     defaultMarginBp: num(row.default_margin_bp),
   };
 }
