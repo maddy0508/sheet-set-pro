@@ -1,0 +1,67 @@
+# Continuous integration: typecheck, engine tests, production build.
+#
+# Uses no third-party actions. The runner in this environment cannot resolve external
+# actions (every job referencing one fails at startup), so the job is plain shell:
+# fetch the commit with the job token, install, verify.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch commit
+        env:
+          REPO: ${{ github.repository }}
+          TOKEN: ${{ github.token }}
+          REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          git init --quiet .
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/${REPO}.git"
+          git fetch --quiet --depth 1 origin "${REF}"
+          git checkout --quiet FETCH_HEAD
+          git remote set-url origin "https://github.com/${REPO}.git"
+
+      - name: Ensure Node.js
+        run: |
+          set -euo pipefail
+          if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+            node --version
+            npm --version
+          else
+            curl --silent --show-error --fail --location \
+              https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz \
+              --output /tmp/node.tar.xz
+            tar --extract --xz --file /tmp/node.tar.xz --directory /tmp
+            echo "/tmp/node-v22.14.0-linux-x64/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Engine tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build

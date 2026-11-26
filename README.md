@@ -1,1 +1,93 @@
-# sheet-set-pro
+# Sheet Set Pro
+
+Roofing measurement, sheet layout, material calculation and quoting for **Mitchell's Metal Roofing**
+(Bendigo, Victoria).
+
+This build is the application itself: customer and job management, roof capture, geometry checks,
+deterministic sheet layout, bill of materials, estimates, quotes, invoices and payment records.
+
+## Running it
+
+```bash
+npm install
+npm run dev        # local development
+npm run build      # production build
+npm test           # engine test suite
+npm run test:db    # schema, RLS and history rules against a local PostgreSQL
+npm run test:api   # persistence layer against a local PostgREST + PostgreSQL stack
+npm run typecheck
+```
+
+## What works today
+
+| Area | State |
+|---|---|
+| Dashboard | Active jobs, quoted pipeline, unpaid invoices, attention list, activity |
+| Customers | Create, edit, remove, search |
+| Jobs | Create, filter, job workspace with eight working tabs |
+| Roof capture | Drag to draw planes on a plan view, or enter dimensions; pitch per plane |
+| Measurement | Evidence records, measurements, supersede-not-overwrite, grade gates |
+| Validation | Blocking and warning checks incl. overlap, pitch range, minimum pitch |
+| Sheet layout | Courses from effective cover width, splitting against maximum length |
+| Materials | BOM grouped by cut length, flashing runs, fastener rule, CSV export when qualified |
+| Commercial | Estimate revisions with margin, quote issue and preview, acceptance |
+| Billing | Invoice draft/issue/void, payments with idempotency, allocation, balances |
+| Activity | Append-only event trail per job |
+
+## Design decisions worth knowing
+
+- **Deterministic arithmetic.** Dimensions are integer millimetres, money is integer cents.
+  Rounding happens only at declared boundaries (`mulDivRound`, half away from zero). No
+  trigonometry and no floating-point division on the manufacturing path.
+- **No invented specifications.** The bundled product catalogue is explicitly synthetic. Order-grade
+  output, supplier export and manufacturing release stay locked until the business enters and
+  verifies real manufacturer data.
+- **Nothing is overwritten.** Issued quotes and invoices are immutable; corrections create new
+  revisions; superseded measurements are retained.
+- **Provenance is mandatory.** A measurement without an evidence record cannot be order grade, and
+  AI-assisted evidence can never be.
+- **Failures are explicit.** Missing rules produce named codes and excluded lines, never zeros.
+
+## Storage
+
+Records live in **Supabase Postgres** when `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`
+are present at build time. Without them the application falls back to a device-only workspace in
+`localStorage`, which is useful for development and for offline demos but is not shared or backed up.
+
+The shared workspace is single-business, not multi-tenant: every table carries the business id, and
+row level security limits reads and writes to members of that business. Anonymous requests are
+refused. See `supabase/README.md` for the schema, the migrations, first-run setup and the tests.
+
+Writes go through the same typed actions as before. The store applies a change optimistically, then
+persists the difference between the previous and the new state; a rejected write restores the
+previous state and reports the failure, and the database is re-read so the screen always matches
+what was actually stored.
+
+## Storage (local mode)
+
+Without Supabase configuration the build persists to the browser's local storage on the device. It
+is a working development workspace: data is not shared between devices and is not backed up.
+
+## Layout
+
+```
+src/domain/   pure TypeScript engines: numerics, geometry, validation, layout, material, pricing
+src/data/     types, seed data, store, row mapping and Supabase repository
+src/auth/     sign-in, workspace claim and session gate
+src/lib/      job-level composition of the engines
+src/ui/       design system primitives and icons
+src/layout/   application shell
+src/pages/    screens, including the job workspace and its tabs
+src/styles/   design tokens and component styles
+```
+
+## Brand
+
+The interface uses the supplied Sheet Set Pro identity: charcoal and steel body, slate blue panels,
+cyan accent. No other palette is substituted.
+
+## Not in scope
+
+Payroll, rostering, crew management, customer portal, multi-tenant SaaS, general ledger, bank
+reconciliation, BAS lodgement, structural engineering, and machine/manufacturing integration.
+Aerial imagery, AI recognition, LiDAR and AR are deferred until licensing and hardware access exist.
