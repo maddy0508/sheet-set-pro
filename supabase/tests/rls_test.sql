@@ -204,8 +204,14 @@ select tests.expect_error(
   'duplicate key'
 );
 
+-- Money can only be applied to a live invoice, so INV-0001 (now voided) is not a
+-- target; a second issued invoice carries the allocation below.
+insert into public.invoices (id, business_id, job_id, number, status, lines, totals, gst_rate_bp, issued_at, fingerprint)
+values ('ffffffff-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-000000000001', 'INV-0002', 'issued', '[]'::jsonb,
+        '{"subtotalCents":100000,"gstCents":0,"totalCents":100000}'::jsonb, 0, now(), 'fp-inv-2');
+
 insert into public.payment_allocations (id, business_id, payment_id, invoice_id, amount_cents)
-values ('88888888-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', '99999999-0000-4000-8000-000000000001', 'ffffffff-0000-4000-8000-000000000001', 50000);
+values ('88888888-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', '99999999-0000-4000-8000-000000000001', 'ffffffff-0000-4000-8000-000000000002', 50000);
 
 select tests.expect_error(
   'an allocation cannot be edited',

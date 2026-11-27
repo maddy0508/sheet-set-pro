@@ -30,4 +30,10 @@ echo "Creating test harness…"
 echo "Running access-control and history suite…"
 "${PSQL[@]}" -d "${DB_NAME}" -f "${ROOT}/supabase/tests/rls_test.sql"
 
+echo "Running commercial integrity suite…"
+"${PSQL[@]}" -d "${DB_NAME}" -f "${ROOT}/supabase/tests/commercial_integrity_test.sql"
+
+echo "Running allocation concurrency test…"
+SSP_TEST_DB="${DB_NAME}" bash "${ROOT}/supabase/tests/allocation_concurrency_test.sh"
+
 echo "Database suite passed."
