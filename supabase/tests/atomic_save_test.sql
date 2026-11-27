@@ -62,7 +62,8 @@ begin
         "business_id": "00000000-0000-4000-8000-000000000001",
         "job_id": "d0000000-0000-4000-8000-000000000001",
         "ref": "P1", "x_mm": 0, "y_mm": 0,
-        "width_mm": 6000, "length_mm": 3600, "pitch_microdeg": 22500000
+        "width_mm": 6000, "length_mm": 3600, "pitch_microdeg": 22500000,
+        "fall": "west", "ridge_width_mm": 4200
       }],
       "flashings": [{
         "id": "f0000000-0000-4000-8000-000000000001",
@@ -84,6 +85,14 @@ begin
   );
 end
 $$;
+
+select tests.expect_count(
+  'a plane keeps its fall direction and ridge width',
+  $q$select 1 from public.roof_planes
+      where id = 'e0000000-0000-4000-8000-000000000001'
+        and fall = 'west' and ridge_width_mm = 4200$q$,
+  1
+);
 
 select tests.expect_count(
   'a successful save writes the business settings',
@@ -110,6 +119,15 @@ select tests.expect_count(
 select tests.expect_count(
   'a record written without an ord column still gets one',
   $q$select 1 from public.roof_planes where id = 'e0000000-0000-4000-8000-000000000001' and ord is not null$q$,
+  1
+);
+
+select tests.expect_count(
+  'a plane written without a fall direction defaults to south',
+  $q$select 1 from public.roof_planes
+      where id = 'e0000000-0000-4000-8000-000000000001' and fall = 'west'
+     union all
+     select 1 from public.roof_planes where fall is null$q$,
   1
 );
 

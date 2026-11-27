@@ -1,3 +1,4 @@
+import { isFall } from '@/domain/roof3d';
 import type {
   ActivityEvent,
   Allocation,
@@ -155,6 +156,8 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
       width_mm: entity.widthMm,
       length_mm: entity.lengthMm,
       pitch_microdeg: entity.pitchMicrodeg,
+      fall: entity.fall ?? 'south',
+      ridge_width_mm: entity.ridgeWidthMm ?? null,
     }),
     fromRow: (row) => ({
       id: text(row.id),
@@ -165,6 +168,8 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
       widthMm: num(row.width_mm),
       lengthMm: num(row.length_mm),
       pitchMicrodeg: num(row.pitch_microdeg),
+      fall: isFall(row.fall) ? row.fall : 'south',
+      ridgeWidthMm: row.ridge_width_mm === null || row.ridge_width_mm === undefined ? null : num(row.ridge_width_mm),
     }),
   },
 
