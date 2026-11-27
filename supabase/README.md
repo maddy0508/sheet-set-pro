@@ -107,6 +107,9 @@ tests/        local auth shim, assertion harness, access-control suite
 ## Known limits
 
 - No storage buckets yet: photographs and plans are recorded as evidence metadata, not files.
-- No backup automation. Supabase's own backups apply; the RPO/RTO targets are not yet verified.
+- No backup automation. `scripts/backup-db.sh` takes a verified logical backup on demand and
+  `scripts/restore-drill.sh` proves it restores; see `docs/operations/backup-and-restore.md`.
+  Nothing schedules either yet, and a hosted project does not exist, so the RPO/RTO targets are
+  not met.
 - `claim_workspace` is the only way to add the first member. Later members are added directly in the
   database (a member-management screen is not in R1 scope).
