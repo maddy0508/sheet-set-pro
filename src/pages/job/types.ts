@@ -1,3 +1,4 @@
+import type { JobCosting } from '@/lib/costing';
 import type { CatalogueProfile, Evidence, Flashing, Job, Measurement, Plane } from '@/data/types';
 import type { JobComputation } from '@/lib/jobCalc';
 
@@ -9,4 +10,5 @@ export type JobTabProps = {
   measurements: Measurement[];
   profile: CatalogueProfile | null;
   computation: JobComputation;
+  costing: JobCosting;
 };

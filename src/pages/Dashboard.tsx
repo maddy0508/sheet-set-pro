@@ -1,6 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore } from '@/data/store';
 import { computeJob } from '@/lib/jobCalc';
+import { jobCosting } from '@/lib/costing';
 import { formatAreaM2, formatCents } from '@/domain/units';
 import { Card, EmptyState, JobStatusBadge, PageHead, Stat, Badge, Notice } from '@/ui';
 import { IconAlert, IconArrowRight, IconPlus, IconSpark } from '@/ui/icons';
@@ -49,6 +50,31 @@ export function Dashboard() {
     })
     .filter((row) => row.blocking > 0 || row.unknowns > 0);
 
+  const profitability = state.jobs
+    .map((job) => {
+      const invoices = state.invoices.filter((i) => i.jobId === job.id);
+      if (!invoices.some((invoice) => invoice.status === 'issued')) return null;
+      const computation = computeJob({
+        job,
+        planes: state.planes.filter((p) => p.jobId === job.id),
+        flashings: state.flashings.filter((f) => f.jobId === job.id),
+        measurements: state.measurements.filter((m) => m.jobId === job.id),
+        profile: state.catalogue.find((p) => p.id === job.profileId) ?? null,
+      });
+      const costing = jobCosting({
+        areaMm2: computation.areaMm2,
+        bomLines: computation.bom.lines,
+        invoices,
+        allocations: state.allocations,
+        company: state.company,
+      });
+      return { job, costing };
+    })
+    .filter((row): row is { job: (typeof state.jobs)[number]; costing: ReturnType<typeof jobCosting> } => row !== null);
+
+  const realisedProfit = profitability.reduce((sum, row) => sum + (row.costing.profitCents ?? 0), 0);
+  const profitKnown = profitability.length > 0 && profitability.every((row) => row.costing.profitCents !== null);
+
   const recentJobs = [...state.jobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 6);
   const catalogueVerified = state.catalogue.some((p) => p.verificationState === 'VERIFIED');
   const gstUnconfirmed = state.company.gstRegistered === null || !state.company.gstRateConfirmed;
@@ -78,6 +104,18 @@ export function Dashboard() {
         <Stat label="Quoted pipeline" value={formatCents(pipelineCents)} hint="Issued quotes not yet closed" />
         <Stat label="Unpaid invoices" value={formatCents(unpaidCents)} hint={`${state.invoices.filter((i) => i.status === 'issued').length} issued`} />
         <Stat label="Roof measured" value={formatAreaM2(totalArea)} hint="Across all captured planes" />
+        <Stat
+          accent
+          label="Realised profit"
+          value={profitKnown ? formatCents(realisedProfit) : '—'}
+          hint={
+            profitability.length === 0
+              ? 'No invoiced jobs yet'
+              : profitKnown
+                ? `Across ${profitability.length} invoiced job${profitability.length === 1 ? '' : 's'}, ex GST`
+                : 'Labour cost not recorded'
+          }
+        />
       </div>
 
       {(gstUnconfirmed || !catalogueVerified) && (

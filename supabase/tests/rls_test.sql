@@ -204,8 +204,14 @@ select tests.expect_error(
   'duplicate key'
 );
 
+-- Money can only be applied to a live invoice, so INV-0001 (now voided) is not a
+-- target; a second issued invoice carries the allocation below.
+insert into public.invoices (id, business_id, job_id, number, status, lines, totals, gst_rate_bp, issued_at, fingerprint)
+values ('ffffffff-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-000000000001', 'INV-0002', 'issued', '[]'::jsonb,
+        '{"subtotalCents":100000,"gstCents":0,"totalCents":100000}'::jsonb, 0, now(), 'fp-inv-2');
+
 insert into public.payment_allocations (id, business_id, payment_id, invoice_id, amount_cents)
-values ('88888888-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', '99999999-0000-4000-8000-000000000001', 'ffffffff-0000-4000-8000-000000000001', 50000);
+values ('88888888-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', '99999999-0000-4000-8000-000000000001', 'ffffffff-0000-4000-8000-000000000002', 50000);
 
 select tests.expect_error(
   'an allocation cannot be edited',
@@ -250,6 +256,24 @@ select tests.expect_error(
   'a synthetic entry cannot claim to be verified',
   $q$insert into public.catalogue_profiles (id, business_id, manufacturer, name, material, verification_state, price_basis) values ('cat-bad', '00000000-0000-4000-8000-000000000001', 'Fake', 'Fake', 'Steel', 'VERIFIED', 'SYNTHETIC')$q$,
   'catalogue_unverified_source'
+);
+
+-- Labour cost is an optional internal cost basis ---------------------------
+select tests.expect_count(
+  'the labour cost basis starts unset, so profit is unknown rather than zero',
+  $q$select 1 from public.businesses where id = '00000000-0000-4000-8000-000000000001' and labour_cost_cents_per_m2 is null$q$,
+  1
+);
+update public.businesses set labour_cost_cents_per_m2 = 1800 where id = '00000000-0000-4000-8000-000000000001';
+select tests.expect_count(
+  'a member can record the labour cost basis',
+  $q$select 1 from public.businesses where labour_cost_cents_per_m2 = 1800$q$,
+  1
+);
+select tests.expect_error(
+  'a negative labour cost is rejected',
+  $q$update public.businesses set labour_cost_cents_per_m2 = -1 where id = '00000000-0000-4000-8000-000000000001'$q$,
+  'violates check constraint'
 );
 
 reset role;

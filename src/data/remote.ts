@@ -105,29 +105,45 @@ export async function loadWorkspace(): Promise<AppState> {
 }
 
 /**
- * Writes only what changed. Callers await this before telling the operator the change
+ * Writes only what changed, in one database transaction.
+ *
+ * Every part of a save travels in a single RPC, so a refusal anywhere leaves the database
+ * exactly as it was: the operator never ends up with a job status that describes a quote
+ * the database would not store. Callers await this before telling the operator the change
  * was saved; a rejection here is a real failure, never something to swallow.
  */
 export async function persistStateChange(previous: AppState, next: AppState): Promise<void> {
   const client = requireSupabase();
   const businessId = next.company.id;
 
-  if (JSON.stringify(previous.company) !== JSON.stringify(next.company)) {
-    const { error } = await client.from('businesses').update(companyToRow(next.company)).eq('id', businessId);
-    if (error) return fail('Saving business settings', error);
-  }
-
+  const businessChanged = JSON.stringify(previous.company) !== JSON.stringify(next.company);
   const changes = diffState(previous, next, businessId);
 
+  const upserts: Record<string, Row[]> = {};
+  const deletes: Record<string, string[]> = {};
+
   for (const change of changes) {
-    if (change.upserts.length === 0) continue;
-    const { error } = await client.from(change.table).upsert(change.upserts, { onConflict: 'id' });
-    if (error) return fail(`Saving ${change.upserts.length} ${change.table} record(s)`, error);
+    if (change.upserts.length > 0) upserts[change.table] = change.upserts;
+    if (change.deletes.length > 0) deletes[change.table] = change.deletes;
   }
 
-  for (const change of [...changes].reverse()) {
-    if (change.deletes.length === 0) continue;
-    const { error } = await client.from(change.table).delete().in('id', change.deletes);
-    if (error) return fail(`Removing ${change.deletes.length} ${change.table} record(s)`, error);
+  if (!businessChanged && Object.keys(upserts).length === 0 && Object.keys(deletes).length === 0) return;
+
+  const { error } = await client.rpc('save_workspace', {
+    p_business_id: businessId,
+    p_business: businessChanged ? companyToRow(next.company) : null,
+    p_upserts: upserts,
+    p_deletes: deletes,
+  });
+
+  if (error) {
+    // Name the parts of the save so a refusal points at the records it was writing;
+    // the database's own message says why.
+    const scope = [
+      ...(businessChanged ? ['business settings'] : []),
+      ...Object.keys(upserts),
+      ...Object.keys(deletes),
+    ];
+    return fail(`Saving the workspace (${scope.join(', ')})`, error);
   }
 }

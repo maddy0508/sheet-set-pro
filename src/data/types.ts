@@ -14,6 +14,8 @@ export type Company = {
   email: string | null;
   phone: string | null;
   labourRateCentsPerM2: number;
+  /** What an installed square metre costs the business. Null until the operator records it. */
+  labourCostCentsPerM2: number | null;
   defaultMarginBp: number;
 };
 
@@ -141,6 +143,37 @@ export type Estimate = {
   updatedAt: string;
 };
 
+/**
+ * Everything a customer sees on an issued document, captured at the moment of issue so a
+ * reprint does not follow later edits to the business, customer, job or catalogue.
+ * `fingerprint` covers this content and nothing that changes afterwards.
+ */
+export type DocumentSnapshot = {
+  version: 1;
+  capturedAt: string;
+  kind: 'QUOTE' | 'INVOICE';
+  heading: string;
+  number: string;
+  issuedAt: string | null;
+  validUntil: string | null;
+  dueDate: string | null;
+  business: { name: string; detail: string[] };
+  customer: { name: string; detail: string[] };
+  job: { title: string; site: string; number: string };
+  lines: {
+    description: string;
+    qtyMicro: number;
+    unit: string;
+    unitPriceCents: number;
+    amountCents: number;
+    unverified: boolean;
+  }[];
+  totals: { subtotalCents: number; gstCents: number; totalCents: number; gstApplied: boolean; gstRateBp: number };
+  notes: string[];
+  provenance: { catalogueVerified: boolean; recordType: SourceType };
+  fingerprint: string;
+};
+
 export type QuoteStatus = 'draft' | 'issued' | 'accepted' | 'declined';
 
 export type Quote = {
@@ -156,6 +189,8 @@ export type Quote = {
   issuedAt: string | null;
   validUntil: string | null;
   fingerprint: string;
+  /** Captured at issue; null on a draft or on a document issued before snapshots existed. */
+  snapshot: DocumentSnapshot | null;
   createdAt: string;
 };
 
@@ -175,6 +210,8 @@ export type Invoice = {
   dueDate: string | null;
   voidReason: string | null;
   fingerprint: string;
+  /** Captured at issue; null on a draft or on a document issued before snapshots existed. */
+  snapshot: DocumentSnapshot | null;
   createdAt: string;
 };
 

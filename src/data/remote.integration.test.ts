@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
-import type { AppState, Customer, Invoice, Job, Quote } from './types';
+import type { Allocation, AppState, Customer, Evidence, Invoice, Job, Measurement, Payment, Plane, Quote } from './types';
+import { captureInvoiceSnapshot } from '@/lib/document';
 import { claimWorkspace, fetchWorkspaceStatus, loadWorkspace, persistStateChange } from './remote';
 
 /**
@@ -61,6 +62,7 @@ const quote: Quote = {
   issuedAt: stamp,
   validUntil: '2026-12-26',
   fingerprint: 'fp-quote-1',
+  snapshot: null,
   createdAt: stamp,
 };
 
@@ -78,12 +80,45 @@ const invoice: Invoice = {
   dueDate: '2026-12-10T00:00:00.000Z',
   voidReason: null,
   fingerprint: 'fp-invoice-1',
+  snapshot: null,
   createdAt: stamp,
 };
 
 function withRecords(state: AppState): AppState {
   return { ...state, customers: [customer], jobs: [job] };
 }
+
+/** Everything the operator would see, as one string, for before/after comparison. */
+const stateFingerprint = (state: AppState): string => JSON.stringify(state);
+
+const atomicCustomer = (id: string, name: string): Customer => ({
+  id,
+  name,
+  contactName: '',
+  email: '',
+  phone: '',
+  address: '',
+  notes: 'Atomic save fixture.',
+  sourceType: 'TEST',
+  createdAt: stamp,
+  updatedAt: stamp,
+});
+
+const atomicJob = (id: string, customerId: string, jobNumber: string): Job => ({
+  id,
+  customerId,
+  jobNumber,
+  title: 'Atomic save job',
+  siteAddress: '',
+  status: 'draft',
+  notes: '',
+  sourceType: 'TEST',
+  profileId: null,
+  crsEpsg: null,
+  operatorApproved: false,
+  createdAt: stamp,
+  updatedAt: stamp,
+});
 
 run('persistence over the real API', () => {
   it('claims the workspace, writes, reloads and protects history', async () => {
@@ -206,6 +241,234 @@ run('persistence over the real API', () => {
     await persistStateChange(afterSupersede, accepted);
     const afterAccept = await loadWorkspace();
     expect(afterAccept.quotes[0].status).toBe('accepted');
+  });
+
+  it('enforces allocation limits and freezes issued documents in the database', async () => {
+    const state = await loadWorkspace();
+    const issuedInvoice = state.invoices.find((candidate) => candidate.id === invoice.id);
+    expect(issuedInvoice).toBeDefined();
+
+    const payment: Payment = {
+      id: '99999999-1111-4111-8111-000000000001',
+      jobId: job.id,
+      amountCents: 1000,
+      receivedAt: stamp,
+      method: 'bank_transfer',
+      reference: 'INTEG-1',
+      idempotencyKey: 'integ-1',
+      createdAt: stamp,
+    };
+    const withPayment: AppState = { ...state, payments: [payment] };
+    await persistStateChange(state, withPayment);
+
+    const allocation: Allocation = {
+      id: '88888888-1111-4111-8111-000000000001',
+      paymentId: payment.id,
+      invoiceId: invoice.id,
+      amountCents: 600,
+      createdAt: stamp,
+    };
+    const allocated: AppState = { ...withPayment, allocations: [allocation] };
+    await persistStateChange(withPayment, allocated);
+
+    const reloaded = await loadWorkspace();
+    expect(reloaded.allocations.map((row) => row.amountCents)).toEqual([600]);
+
+    // The browser would refuse this too; here the database has to.
+    const overAllocated: AppState = {
+      ...allocated,
+      allocations: [...allocated.allocations, { ...allocation, id: '88888888-1111-4111-8111-000000000002', amountCents: 600 }],
+    };
+    await expect(persistStateChange(allocated, overAllocated)).rejects.toThrow(/unallocated on payment/i);
+
+    // A draft invoice is not a payment target.
+    const draftInvoice: Invoice = {
+      ...invoice,
+      id: 'ffffffff-1111-4111-8111-000000000002',
+      number: 'INV-0002',
+      status: 'draft',
+      issuedAt: null,
+      dueDate: null,
+      snapshot: null,
+      fingerprint: '',
+    };
+    const withDraft: AppState = { ...allocated, invoices: [...allocated.invoices, draftInvoice] };
+    await persistStateChange(allocated, withDraft);
+
+    const toDraft: AppState = {
+      ...withDraft,
+      allocations: [...withDraft.allocations, { ...allocation, id: '88888888-1111-4111-8111-000000000003', invoiceId: draftInvoice.id }],
+    };
+    await expect(persistStateChange(withDraft, toDraft)).rejects.toThrow(/only an issued invoice/i);
+
+    // An issued document's snapshot is written once and then frozen.
+    const snapshotted: Invoice = {
+      ...draftInvoice,
+      id: 'ffffffff-1111-4111-8111-000000000003',
+      number: 'INV-0003',
+      status: 'issued',
+      issuedAt: stamp,
+      dueDate: '2026-12-10T00:00:00.000Z',
+    };
+    const snapshot = captureInvoiceSnapshot({
+      invoice: snapshotted,
+      job,
+      customer,
+      company: state.company,
+      catalogueVerified: false,
+    });
+    const issuedWithSnapshot: Invoice = { ...snapshotted, snapshot, fingerprint: snapshot.fingerprint };
+    const withIssued: AppState = { ...withDraft, invoices: [...withDraft.invoices, issuedWithSnapshot] };
+    await persistStateChange(withDraft, withIssued);
+
+    const stored = (await loadWorkspace()).invoices.find((candidate) => candidate.id === issuedWithSnapshot.id);
+    expect(stored?.snapshot?.fingerprint).toBe(snapshot.fingerprint);
+    expect(stored?.snapshot?.business).toEqual(snapshot.business);
+    expect(stored?.snapshot?.customer).toEqual(snapshot.customer);
+
+    const rewritten: AppState = {
+      ...withIssued,
+      invoices: withIssued.invoices.map((candidate) =>
+        candidate.id === issuedWithSnapshot.id
+          ? { ...candidate, snapshot: { ...snapshot, customer: { ...snapshot.customer, name: 'Rewritten Customer' } } }
+          : candidate,
+      ),
+    };
+    await expect(persistStateChange(withIssued, rewritten)).rejects.toThrow(/cannot change/i);
+  });
+
+  it('applies a whole save, inserts and deletes included', async () => {
+    const before = await loadWorkspace();
+
+    const newCustomer = atomicCustomer('a0a0a0a0-2222-4222-8222-000000000001', 'Atomic Customer');
+    const newJob = atomicJob('b0b0b0b0-2222-4222-8222-000000000001', newCustomer.id, 'J-9001');
+    const newPlane: Plane = {
+      id: 'c0c0c0c0-2222-4222-8222-000000000001',
+      jobId: newJob.id,
+      ref: 'P1',
+      xMm: 0,
+      yMm: 0,
+      widthMm: 6000,
+      lengthMm: 3600,
+      pitchMicrodeg: 22_500_000,
+    };
+
+    const saved: AppState = {
+      ...before,
+      customers: [...before.customers, newCustomer],
+      jobs: [...before.jobs, newJob],
+      planes: [...before.planes, newPlane],
+    };
+    await persistStateChange(before, saved);
+
+    const afterSave = await loadWorkspace();
+    expect(afterSave.customers.some((row) => row.id === newCustomer.id)).toBe(true);
+    expect(afterSave.jobs.some((row) => row.id === newJob.id)).toBe(true);
+    expect(afterSave.planes.some((row) => row.id === newPlane.id)).toBe(true);
+
+    // The same path removes a record, so deletes are exercised too.
+    const removed: AppState = { ...afterSave, planes: afterSave.planes.filter((row) => row.id !== newPlane.id) };
+    await persistStateChange(afterSave, removed);
+    expect((await loadWorkspace()).planes.some((row) => row.id === newPlane.id)).toBe(false);
+  });
+
+  it('rolls back the earlier tables when a later record in the same save is refused', async () => {
+    const before = await loadWorkspace();
+    const beforeFingerprint = stateFingerprint(before);
+
+    const newCustomer = atomicCustomer('a0a0a0a0-2222-4222-8222-000000000002', 'Atomic Rollback Customer');
+    const newJob = atomicJob('b0b0b0b0-2222-4222-8222-000000000002', newCustomer.id, 'J-9002');
+    const newEvidence: Evidence = {
+      id: 'd0d0d0d0-2222-4222-8222-000000000002',
+      jobId: newJob.id,
+      sourceKind: 'manual',
+      note: 'Written before the refusal.',
+      accuracyClaimMm: 5,
+      accuracyBasis: 'operator_estimate',
+      isVerified: false,
+      createdAt: stamp,
+    };
+    const refused: Measurement = {
+      id: 'e0e0e0e0-2222-4222-8222-000000000002',
+      jobId: newJob.id,
+      evidenceId: newEvidence.id,
+      kind: 'control_dimension',
+      label: 'Impossible dimension',
+      valueMm: 0,
+      toleranceMm: 5,
+      grade: 'ESTIMATE_GRADE',
+      isActive: true,
+      createdAt: stamp,
+    };
+
+    const broken: AppState = {
+      ...before,
+      customers: [...before.customers, newCustomer],
+      jobs: [...before.jobs, newJob],
+      evidence: [...before.evidence, newEvidence],
+      measurements: [...before.measurements, refused],
+    };
+
+    const error = await persistStateChange(before, broken).catch((reason: unknown) => reason as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/Saving the workspace/);
+    expect(error.message).toMatch(/measurements/);
+    expect(error.message).toMatch(/value_mm/i);
+
+    const after = await loadWorkspace();
+    expect(after.customers.some((row) => row.id === newCustomer.id)).toBe(false);
+    expect(after.jobs.some((row) => row.id === newJob.id)).toBe(false);
+    expect(after.evidence.some((row) => row.id === newEvidence.id)).toBe(false);
+    expect(stateFingerprint(after)).toBe(beforeFingerprint);
+  });
+
+  it('leaves the business record untouched when the save that changed it is refused', async () => {
+    const before = await loadWorkspace();
+    const beforeFingerprint = stateFingerprint(before);
+
+    const broken: AppState = {
+      ...before,
+      company: { ...before.company, displayName: 'Should Not Persist', abn: '99999999999' },
+      measurements: [
+        ...before.measurements,
+        {
+          ...before.measurements[0],
+          id: 'e0e0e0e0-2222-4222-8222-000000000003',
+          valueMm: -5,
+        },
+      ],
+    };
+
+    await expect(persistStateChange(before, broken)).rejects.toThrow(/value_mm|check constraint/i);
+
+    const after = await loadWorkspace();
+    expect(after.company.displayName).toBe(before.company.displayName);
+    expect(after.company.abn).toBe(before.company.abn);
+    expect(stateFingerprint(after)).toBe(beforeFingerprint);
+  });
+
+  it('rolls back inserts, updates and deletes together when the save is refused', async () => {
+    const before = await loadWorkspace();
+    const beforeFingerprint = stateFingerprint(before);
+
+    const updatedJob = before.jobs[0];
+    const customerWithJobs = before.customers.find((row) => before.jobs.some((entry) => entry.customerId === row.id));
+    expect(customerWithJobs).toBeDefined();
+
+    const extraCustomer = atomicCustomer('a0a0a0a0-2222-4222-8222-000000000004', 'Inserted Before The Refusal');
+    const broken: AppState = {
+      ...before,
+      customers: [...before.customers.filter((row) => row.id !== customerWithJobs!.id), extraCustomer],
+      jobs: before.jobs.map((row) => (row.id === updatedJob.id ? { ...row, notes: 'Should not persist' } : row)),
+    };
+
+    await expect(persistStateChange(before, broken)).rejects.toThrow(/foreign key/i);
+
+    const after = await loadWorkspace();
+    expect(after.customers.some((row) => row.id === extraCustomer.id)).toBe(false);
+    expect(after.customers.some((row) => row.id === customerWithJobs!.id)).toBe(true);
+    expect(after.jobs.find((row) => row.id === updatedJob.id)?.notes).toBe(updatedJob.notes);
+    expect(stateFingerprint(after)).toBe(beforeFingerprint);
   });
 
   it('refuses anonymous access to the same tables', async () => {

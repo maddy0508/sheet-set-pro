@@ -18,6 +18,7 @@ export function SettingsPage() {
     gstRateBp: String(company.gstRateBp),
     gstRateConfirmed: company.gstRateConfirmed,
     labourRate: String(company.labourRateCentsPerM2),
+    labourCost: company.labourCostCentsPerM2 === null ? '' : String(company.labourCostCentsPerM2),
     defaultMarginBp: String(company.defaultMarginBp),
   });
 
@@ -33,6 +34,7 @@ export function SettingsPage() {
       gstRateBp: Number(draft.gstRateBp) || 0,
       gstRateConfirmed: draft.gstRateConfirmed,
       labourRateCentsPerM2: Number(draft.labourRate) || 0,
+      labourCostCentsPerM2: draft.labourCost.trim() === '' ? null : Number(draft.labourCost) || 0,
       defaultMarginBp: Number(draft.defaultMarginBp) || 0,
     });
   };
@@ -150,6 +152,9 @@ export function SettingsPage() {
               <Field label="Labour rate" hint="Cents per square metre.">
                 <UnitInput unit="c/m²" value={draft.labourRate} onChange={(e) => setDraft({ ...draft, labourRate: e.target.value })} />
               </Field>
+              <Field label="Labour cost" hint="Internal cost per m². Leave blank if unknown.">
+                <UnitInput unit="c/m²" value={draft.labourCost} onChange={(e) => setDraft({ ...draft, labourCost: e.target.value })} />
+              </Field>
               <Field label="Default margin" hint="Basis points: 2500 = 25%">
                 <UnitInput
                   unit="bp"
@@ -159,8 +164,11 @@ export function SettingsPage() {
               </Field>
             </div>
             <div className="small faint" style={{ marginTop: 10 }}>
-              Current labour rate: {formatCents(company.labourRateCentsPerM2)}/m² · margin{' '}
-              {(company.defaultMarginBp / 100).toFixed(2)}%
+              Charged: {formatCents(company.labourRateCentsPerM2)}/m² · margin {(company.defaultMarginBp / 100).toFixed(2)}%
+              <br />
+              {company.labourCostCentsPerM2 === null
+                ? 'Labour cost is not recorded, so job profit is reported as unknown.'
+                : `Cost: ${formatCents(company.labourCostCentsPerM2)}/m².`}
             </div>
           </Card>
         </div>

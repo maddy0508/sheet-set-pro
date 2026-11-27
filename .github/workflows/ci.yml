@@ -1,8 +1,12 @@
-# Continuous integration: typecheck, engine tests, production build.
+# Continuous integration.
 #
-# Uses no third-party actions. The runner in this environment cannot resolve external
-# actions (every job referencing one fails at startup), so the job is plain shell:
-# fetch the commit with the job token, install, verify.
+# Every check is its own job, so a failure names what failed. The runner in this
+# environment cannot resolve external `uses:` actions (jobs referencing one fail at
+# startup), so each job bootstraps itself with plain shell: fetch the commit with the
+# job token, install Node.js if the image lacks it, then install dependencies.
+#
+# The database and API jobs run against a real PostgreSQL server on the runner, because
+# the allocation guard, the RLS policies and the history triggers only exist there.
 name: CI
 
 on:
@@ -20,14 +24,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: build
+  typecheck:
+    name: typecheck
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - name: Fetch commit
+      - &bootstrap
+        name: Fetch commit and install
         env:
           REPO: ${{ github.repository }}
           TOKEN: ${{ github.token }}
@@ -39,29 +44,96 @@ jobs:
           git fetch --quiet --depth 1 origin "${REF}"
           git checkout --quiet FETCH_HEAD
           git remote set-url origin "https://github.com/${REPO}.git"
-
-      - name: Ensure Node.js
-        run: |
-          set -euo pipefail
-          if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-            node --version
-            npm --version
-          else
+          if ! command -v node >/dev/null 2>&1; then
             curl --silent --show-error --fail --location \
               https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz \
               --output /tmp/node.tar.xz
             tar --extract --xz --file /tmp/node.tar.xz --directory /tmp
             echo "/tmp/node-v22.14.0-linux-x64/bin" >> "$GITHUB_PATH"
           fi
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Typecheck
+          node --version
+          npm ci --no-audit --no-fund
+      - name: TypeScript
         run: npm run typecheck
 
-      - name: Engine tests
+  unit:
+    name: unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *bootstrap
+      - name: Unit tests
         run: npm test
 
-      - name: Production build
+  build:
+    name: production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *bootstrap
+      - name: Build
         run: npm run build
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *bootstrap
+      - name: Audit production and development dependencies
+        run: npm audit --audit-level=high
+
+  database:
+    name: database integrity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - *bootstrap
+      - name: Ensure PostgreSQL
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql
+          fi
+          sudo service postgresql start
+          for _ in $(seq 1 30); do
+            if pg_isready -q; then break; fi
+            sleep 1
+          done
+          pg_isready
+          psql --version
+      - name: Migrations, RLS, commercial integrity and the allocation race
+        run: bash scripts/test-db.sh
+
+  api:
+    name: api integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - *bootstrap
+      - name: Ensure PostgreSQL
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql
+          fi
+          sudo service postgresql start
+          for _ in $(seq 1 30); do
+            if pg_isready -q; then break; fi
+            sleep 1
+          done
+          pg_isready
+      - name: PostgREST against the migrations, through the browser's own client
+        run: bash scripts/test-api.sh

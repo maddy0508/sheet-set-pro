@@ -4,7 +4,7 @@
  * while a bare PostgREST process serves at the root. This forwards /rest/v1/* to it so
  * the integration suite exercises the client exactly as the browser does.
  *
- *   node scripts/postgrest-proxy.mjs <listenPort> <targetPort>
+ *   node scripts/postgrest-proxy.mjs <listenPort> <targetPort> [listenHost]
  */
 import http from 'node:http';
 

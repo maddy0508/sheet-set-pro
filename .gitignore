@@ -12,3 +12,6 @@ SSP-0*.md
 .openhands/
 
 *.tsbuildinfo
+
+# Local database archives (the default location is outside the repository)
+.backups/

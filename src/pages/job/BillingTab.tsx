@@ -2,10 +2,13 @@ import { useMemo, useState } from 'react';
 import { useStore } from '@/data/store';
 import { formatCents } from '@/domain/units';
 import { Badge, Card, EmptyState, Field, Modal, Notice, SelectInput, Stat, TextInput, UnitInput } from '@/ui';
-import { IconAlert, IconCash, IconDoc } from '@/ui/icons';
+import { IconAlert, IconCash, IconCheck, IconDoc } from '@/ui/icons';
+import { invoiceDocument } from '@/lib/document';
+import { downloadPdf } from '@/lib/pdf';
+import type { Invoice } from '@/data/types';
 import type { JobTabProps } from './types';
 
-export function BillingTab({ job }: JobTabProps) {
+export function BillingTab({ job, profile }: JobTabProps) {
   const { state, actions } = useStore();
   const invoices = state.invoices.filter((i) => i.jobId === job.id);
   const payments = state.payments.filter((p) => p.jobId === job.id);
@@ -23,6 +26,8 @@ export function BillingTab({ job }: JobTabProps) {
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [feedback, setFeedback] = useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState('');
+  const [pdfNotice, setPdfNotice] = useState('');
   const [allocate, setAllocate] = useState({ paymentId: '', invoiceId: '', amount: '' });
 
   const allocationSums = useMemo(() => {
@@ -39,8 +44,59 @@ export function BillingTab({ job }: JobTabProps) {
   const invoicedTotal = issuedInvoices.reduce((sum, invoice) => sum + invoice.totals.totalCents, 0);
   const paidTotal = issuedInvoices.reduce((sum, invoice) => sum + (allocationSums.byInvoice.get(invoice.id) ?? 0), 0);
   const outstandingTotal = invoicedTotal - paidTotal;
+  const openPayments = payments.filter((payment) => payment.amountCents - (allocationSums.byPayment.get(payment.id) ?? 0) > 0);
+  const openInvoices = issuedInvoices.filter((invoice) => invoice.totals.totalCents - (allocationSums.byInvoice.get(invoice.id) ?? 0) > 0);
+  // With a single candidate the choice is unambiguous, so pre-select it instead of asking twice.
+  const paymentId = allocate.paymentId || (openPayments.length === 1 ? openPayments[0].id : '');
+  const invoiceId = allocate.invoiceId || (openInvoices.length === 1 ? openInvoices[0].id : '');
+  const suggestedCents = (() => {
+    const payment = openPayments.find((candidate) => candidate.id === paymentId);
+    const invoice = openInvoices.find((candidate) => candidate.id === invoiceId);
+    if (!payment || !invoice) return 0;
+    const paymentLeft = payment.amountCents - (allocationSums.byPayment.get(payment.id) ?? 0);
+    const invoiceLeft = invoice.totals.totalCents - (allocationSums.byInvoice.get(invoice.id) ?? 0);
+    return Math.max(0, Math.min(paymentLeft, invoiceLeft));
+  })();
+  const balanceOf = (invoice: Invoice): number => {
+    const allocated = allocationSums.byInvoice.get(invoice.id) ?? 0;
+    if (invoice.status === 'voided') return 0;
+    if (invoice.status === 'issued') return invoice.totals.totalCents - allocated;
+    return invoice.totals.totalCents;
+  };
   const previewInvoice = invoices.find((i) => i.id === previewId) ?? null;
+  const previewDoc = previewInvoice
+    ? invoiceDocument({
+        invoice: previewInvoice,
+        job,
+        customer,
+        company,
+        catalogueVerified: profile?.verificationState === 'VERIFIED',
+        balanceCents: balanceOf(previewInvoice),
+      })
+    : null;
   const acceptedQuote = quotes.find((q) => q.status === 'accepted') ?? null;
+
+  const saveInvoicePdf = (invoiceId: string) => {
+    const invoice = invoices.find((candidate) => candidate.id === invoiceId);
+    if (!invoice) return;
+    const balanceCents = balanceOf(invoice);
+    setPdfError('');
+    setPdfNotice('');
+    void downloadPdf(
+      invoiceDocument({
+        invoice,
+        job,
+        customer,
+        company,
+        catalogueVerified: profile?.verificationState === 'VERIFIED',
+        balanceCents,
+      }),
+    )
+      .then(() => setPdfNotice(`Invoice ${invoice.number} saved as a PDF.`))
+      .catch((error: unknown) => {
+        setPdfError(error instanceof Error ? error.message : 'The PDF could not be produced.');
+      });
+  };
 
   const recordPayment = () => {
     const amount = Math.round(Number(paymentDraft.amount) * 100);
@@ -64,18 +120,34 @@ export function BillingTab({ job }: JobTabProps) {
   };
 
   const doAllocate = () => {
-    const amount = Math.round(Number(allocate.amount) * 100);
-    if (!allocate.paymentId || !allocate.invoiceId) {
+    const amount = Math.round(Number(allocate.amount.trim() === '' ? suggestedCents / 100 : allocate.amount) * 100);
+    if (!paymentId || !invoiceId) {
       setFeedback('Choose a payment and an invoice.');
       return;
     }
-    const result = actions.allocatePayment(allocate.paymentId, allocate.invoiceId, amount);
+    const result = actions.allocatePayment(paymentId, invoiceId, amount);
     setFeedback(result.ok ? '' : result.message ?? 'Allocation failed.');
     if (result.ok) setAllocate({ paymentId: '', invoiceId: '', amount: '' });
   };
 
   return (
     <div className="grid" style={{ gap: 16 }}>
+      {pdfNotice && (
+        <Notice tone="ok" icon={<IconCheck />}>
+          {pdfNotice} Check your downloads folder.
+        </Notice>
+      )}
+      {pdfError && (
+        <Notice tone="danger" icon={<IconAlert />}>
+          The document could not be produced: {pdfError}
+        </Notice>
+      )}
+      {feedback && (
+        <Notice tone="warn" icon={<IconAlert />}>
+          {feedback}
+        </Notice>
+      )}
+
       <div className="grid grid-4">
         <Stat label="Invoiced" value={formatCents(invoicedTotal)} hint={`${issuedInvoices.length} issued`} />
         <Stat label="Received" value={formatCents(paidTotal)} hint={`${payments.length} payments`} />
@@ -149,7 +221,14 @@ export function BillingTab({ job }: JobTabProps) {
                       </td>
                       <td className="actions">
                         {invoice.status === 'draft' && (
-                          <button type="button" className="btn btn-primary btn-sm" onClick={() => actions.issueInvoice(invoice.id)}>
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => {
+                              const result = actions.issueInvoice(invoice.id);
+                              setFeedback(result.ok ? '' : (result.message ?? 'The invoice was not issued.'));
+                            }}
+                          >
                             Issue
                           </button>
                         )}
@@ -164,13 +243,18 @@ export function BillingTab({ job }: JobTabProps) {
                             Preview
                           </button>
                         )}
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => saveInvoicePdf(invoice.id)}>
+                          PDF
+                        </button>
                         {invoice.status === 'issued' && (
                           <button
                             type="button"
                             className="btn btn-ghost btn-sm"
                             onClick={() => {
                               const reason = prompt('Reason for voiding this invoice?');
-                              if (reason) actions.voidInvoice(invoice.id, reason);
+                              if (reason === null) return;
+                              const result = actions.voidInvoice(invoice.id, reason);
+                              setFeedback(result.ok ? '' : (result.message ?? 'The invoice was not voided.'));
                             }}
                           >
                             Void
@@ -232,9 +316,9 @@ export function BillingTab({ job }: JobTabProps) {
         <Card title="Allocate a payment" subtitle="Allocations can never exceed the payment or the invoice">
           <div className="grid" style={{ gap: 12 }}>
             <Field label="Payment">
-              <SelectInput value={allocate.paymentId} onChange={(e) => setAllocate({ ...allocate, paymentId: e.target.value })}>
+              <SelectInput value={paymentId} onChange={(e) => setAllocate({ ...allocate, paymentId: e.target.value })}>
                 <option value="">Select payment…</option>
-                {payments.map((payment) => {
+                {openPayments.map((payment) => {
                   const remaining = payment.amountCents - (allocationSums.byPayment.get(payment.id) ?? 0);
                   return (
                     <option key={payment.id} value={payment.id}>
@@ -245,9 +329,9 @@ export function BillingTab({ job }: JobTabProps) {
               </SelectInput>
             </Field>
             <Field label="Invoice">
-              <SelectInput value={allocate.invoiceId} onChange={(e) => setAllocate({ ...allocate, invoiceId: e.target.value })}>
+              <SelectInput value={invoiceId} onChange={(e) => setAllocate({ ...allocate, invoiceId: e.target.value })}>
                 <option value="">Select invoice…</option>
-                {issuedInvoices.map((invoice) => (
+                {openInvoices.map((invoice) => (
                   <option key={invoice.id} value={invoice.id}>
                     {invoice.number} · {formatCents(invoice.totals.totalCents - (allocationSums.byInvoice.get(invoice.id) ?? 0))} outstanding
                   </option>
@@ -255,12 +339,15 @@ export function BillingTab({ job }: JobTabProps) {
               </SelectInput>
             </Field>
             <Field label="Amount">
-              <UnitInput unit="$" value={allocate.amount} onChange={(e) => setAllocate({ ...allocate, amount: e.target.value })} />
+              <UnitInput
+                unit="$"
+                value={allocate.amount === '' && suggestedCents > 0 ? (suggestedCents / 100).toFixed(2) : allocate.amount}
+                onChange={(e) => setAllocate({ ...allocate, amount: e.target.value })}
+              />
             </Field>
-            <button type="button" className="btn btn-secondary" onClick={doAllocate} disabled={issuedInvoices.length === 0 || payments.length === 0}>
+            <button type="button" className="btn btn-secondary" onClick={doAllocate} disabled={openInvoices.length === 0 || openPayments.length === 0}>
               Allocate
             </button>
-            {feedback && <div className="notice notice-warn"><IconAlert /><div>{feedback}</div></div>}
           </div>
         </Card>
       </div>
@@ -324,35 +411,47 @@ export function BillingTab({ job }: JobTabProps) {
         onClose={() => setPreviewId(null)}
         wide
         footer={
-          <button type="button" className="btn btn-secondary" onClick={() => setPreviewId(null)}>
-            Close
-          </button>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-secondary" onClick={() => setPreviewId(null)}>
+              Close
+            </button>
+            {previewInvoice && (
+              <button type="button" className="btn btn-primary" onClick={() => saveInvoicePdf(previewInvoice.id)}>
+                <IconDoc size={14} />
+                Download PDF
+              </button>
+            )}
+          </div>
         }
       >
-        {previewInvoice && (
+        {previewDoc && (
           <div className="doc-preview">
             <div className="doc-head">
               <div>
-                <h2>{company.displayName}</h2>
+                <h2>{previewDoc.business.name}</h2>
                 <div className="small" style={{ marginTop: 4, color: '#4d5c69' }}>
-                  {company.address ?? 'Business address not confirmed'}
-                  <br />
-                  {company.abn ? `ABN ${company.abn}` : 'ABN not confirmed'}
+                  {previewDoc.business.detail.map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
                 </div>
               </div>
               <div className="doc-meta">
                 <strong>
-                  {previewInvoice.gstRegisteredSnapshot === true ? 'TAX INVOICE' : 'INVOICE'} {previewInvoice.number}
+                  {previewDoc.heading} {previewDoc.number}
                 </strong>
                 <br />
-                Issued {previewInvoice.issuedAt ? new Date(previewInvoice.issuedAt).toLocaleDateString('en-AU') : '—'}
+                Issued {previewDoc.issuedAt ? new Date(previewDoc.issuedAt).toLocaleDateString('en-AU') : '—'}
                 <br />
-                Due {previewInvoice.dueDate ? new Date(previewInvoice.dueDate).toLocaleDateString('en-AU') : '—'}
+                Due {previewDoc.dueDate ? new Date(previewDoc.dueDate).toLocaleDateString('en-AU') : '—'}
               </div>
             </div>
             <div style={{ marginBottom: 12 }}>
-              <strong>{customer?.name ?? 'Customer'}</strong>
-              <div style={{ color: '#4d5c69' }}>{customer?.address || job.siteAddress || 'Address not recorded'}</div>
+              <strong>{previewDoc.customer.name}</strong>
+              {previewDoc.customer.detail.map((line) => (
+                <div key={line} style={{ color: '#4d5c69' }}>
+                  {line}
+                </div>
+              ))}
             </div>
             <table className="doc-table">
               <thead>
@@ -364,14 +463,14 @@ export function BillingTab({ job }: JobTabProps) {
                 </tr>
               </thead>
               <tbody>
-                {previewInvoice.lines.map((line) => (
-                  <tr key={line.key}>
+                {previewDoc.lines.map((line, index) => (
+                  <tr key={`${line.description}-${index}`}>
                     <td>{line.description}</td>
                     <td className="num">
                       {(line.qtyMicro / 1_000_000).toLocaleString('en-AU', { maximumFractionDigits: 2 })} {line.unit}
                     </td>
                     <td className="num">{formatCents(line.unitPriceCents)}</td>
-                    <td className="num">{formatCents(Math.round((line.qtyMicro * line.unitPriceCents) / 1_000_000))}</td>
+                    <td className="num">{formatCents(line.amountCents)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -379,21 +478,40 @@ export function BillingTab({ job }: JobTabProps) {
             <div className="doc-totals">
               <div>
                 <span>Subtotal</span>
-                <span>{formatCents(previewInvoice.totals.subtotalCents)}</span>
+                <span>{formatCents(previewDoc.totals.subtotalCents)}</span>
               </div>
               <div>
-                <span>GST {previewInvoice.gstRegisteredSnapshot === true ? `(${(previewInvoice.gstRateBp / 100).toFixed(2)}%)` : '(not applied)'}</span>
-                <span>{formatCents(previewInvoice.totals.gstCents)}</span>
+                <span>GST {previewDoc.totals.gstApplied ? `(${(previewDoc.totals.gstRateBp / 100).toFixed(2)}%)` : '(not applied)'}</span>
+                <span>{formatCents(previewDoc.totals.gstCents)}</span>
               </div>
               <div className="grand">
                 <span>Total due</span>
-                <span>{formatCents(previewInvoice.totals.totalCents)}</span>
+                <span>{formatCents(previewDoc.totals.totalCents)}</span>
               </div>
+              {previewDoc.balanceCents !== null && previewDoc.balanceCents !== previewDoc.totals.totalCents && (
+                <div>
+                  <span>Outstanding balance (current)</span>
+                  <span>{formatCents(previewDoc.balanceCents)}</span>
+                </div>
+              )}
             </div>
             <div className="doc-stamp">
-              {previewInvoice.status === 'voided' && <strong>VOIDED — {previewInvoice.voidReason}. </strong>}
-              GST setting recorded at issue: {previewInvoice.gstRegisteredSnapshot === null ? 'not confirmed' : previewInvoice.gstRegisteredSnapshot ? 'registered' : 'not registered'}.
-              Document fingerprint {previewInvoice.fingerprint || 'draft, not issued'}.
+              {previewDoc.notes.map((note) => (
+                <div key={note}>{note}</div>
+              ))}
+              {previewDoc.snapshot === 'legacy' && (
+                <div>
+                  This document was issued before snapshots were captured. It is rebuilt from the current records and may
+                  differ from the copy the customer received.
+                </div>
+              )}
+              {previewDoc.status.status === 'voided' && (
+                <div>
+                  <strong>VOIDED — {previewDoc.status.voidReason ?? 'no reason recorded'}. </strong>
+                  This invoice is retained for the record and is not payable.
+                </div>
+              )}
+              Document fingerprint {previewDoc.fingerprint || 'draft, not issued'}.
             </div>
           </div>
         )}
