@@ -27,8 +27,10 @@ import { fingerprint } from '@/domain/units';
 import { planRunMm } from '@/domain/roof3d';
 import { captureInvoiceSnapshot, captureQuoteSnapshot } from '@/lib/document';
 import type { EvidenceKind, FlashingKind, MeasurementGrade, SourceType } from '@/domain/types';
-import type { Flashing } from './types';
+import type { Flashing, SupplierExport, SupplierExportFormat } from './types';
+import type { SupplierOrder } from '@/domain/supplier';
 import { normaliseTimestamp } from '@/lib/time';
+import { restoreBlocker } from '@/lib/backup';
 
 const STORAGE_KEY = 'sheet-set-pro.state.v1';
 
@@ -107,6 +109,13 @@ export type Actions = {
   ) => { ok: boolean; message?: string };
   allocatePayment: (paymentId: string, invoiceId: string, amountCents: number) => { ok: boolean; message?: string };
   recordSnapshot: (snapshot: Omit<CalcSnapshot, 'id' | 'createdAt'>) => void;
+  recordSupplierExport: (
+    jobId: string,
+    order: SupplierOrder,
+    adapter: string,
+    format: SupplierExportFormat,
+  ) => SupplierExport;
+  restoreWorkspace: (state: AppState) => { ok: boolean; message?: string };
   resetWorkspace: () => void;
   loadSampleJob: () => void;
 };
@@ -317,6 +326,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           profileId: input.profileId ?? existing?.profileId ?? stateRef.current.catalogue[0]?.id ?? null,
           crsEpsg: input.crsEpsg ?? existing?.crsEpsg ?? null,
           operatorApproved: input.operatorApproved ?? existing?.operatorApproved ?? false,
+          colour: input.colour ?? existing?.colour ?? null,
+          requiredBy: input.requiredBy ?? existing?.requiredBy ?? null,
           createdAt: existing?.createdAt ?? nowIso(),
           updatedAt: nowIso(),
         };
@@ -671,6 +682,59 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           snapshots: [{ ...snapshot, id: uid(), createdAt: nowIso() }, ...prev.snapshots].slice(0, 200),
         })),
 
+      recordSupplierExport: (jobId, order, adapter, format) => {
+        const record: SupplierExport = {
+          id: uid(),
+          jobId,
+          number: order.number,
+          generatedAt: order.generatedAt,
+          adapter,
+          format,
+          status: order.status,
+          bomFingerprint: order.provenance.bomFingerprint,
+          calcInputFingerprint: order.provenance.calcInputFingerprint,
+          calcOutputFingerprint: order.provenance.calcOutputFingerprint,
+          engineVersion: order.provenance.engineVersion,
+          totalSheets: order.provenance.totalSheets,
+          totalSheetLengthMm: order.provenance.totalSheetLengthMm,
+          payload: order,
+          createdAt: nowIso(),
+        };
+        commit((prev) => ({
+          ...prev,
+          supplierExports: [record, ...prev.supplierExports],
+          activity: withActivity(
+            prev,
+            'supplier.exported',
+            'job',
+            record.jobId,
+            `${record.number} (${format.toUpperCase()}, ${record.status.toLowerCase()}).`,
+          ),
+        }));
+        return record;
+      },
+
+      restoreWorkspace: (restored) => {
+        const blocker = restoreBlocker(stateRef.current, isSupabaseConfigured ? 'remote' : 'local');
+        if (blocker) return { ok: false, message: blocker };
+        // The backup may come from another installation; the business it belongs to is this one.
+        const next: AppState = {
+          ...restored,
+          company: { ...restored.company, id: stateRef.current.company.id },
+        };
+        commit((prev) => ({
+          ...next,
+          activity: withActivity(
+            { ...prev, activity: next.activity },
+            'workspace.restored',
+            'company',
+            next.company.id,
+            `Workspace restored from a backup of ${next.jobs.length} job(s).`,
+          ),
+        }));
+        return { ok: true };
+      },
+
       resetWorkspace: () => {
         if (isSupabaseConfigured) {
           setSync((current) => ({
@@ -761,6 +825,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
                 profileId: prev.catalogue[0]?.id ?? null,
                 crsEpsg: 7855,
                 operatorApproved: false,
+                colour: 'Monument (SYNTHETIC)',
+                requiredBy: null,
                 createdAt: stamp,
                 updatedAt: stamp,
               },

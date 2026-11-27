@@ -63,8 +63,12 @@ export function Stat({
 
 export type BadgeTone = 'neutral' | 'ok' | 'warn' | 'danger' | 'info' | 'cyan';
 
-export function Badge({ tone = 'neutral', children }: { tone?: BadgeTone; children: ReactNode }) {
-  return <span className={`badge badge-${tone}`}>{children}</span>;
+export function Badge({ tone = 'neutral', title, children }: { tone?: BadgeTone; title?: string; children: ReactNode }) {
+  return (
+    <span className={`badge badge-${tone}`} title={title}>
+      {children}
+    </span>
+  );
 }
 
 const STATUS_TONE: Record<JobStatus, BadgeTone> = {

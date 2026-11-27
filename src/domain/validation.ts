@@ -1,6 +1,6 @@
-import { boundsOverlap, planeBounds } from './geometry';
 import type { PlaneGeometry, ValidationIssue } from './types';
 import { BOUNDS, microToDeg } from './units';
+import { OVERLAP_TOLERANCE_MM2, asRoofPlane, planePlanCorners, polygonOverlapAreaMm2 } from './roof3d';
 
 export type CatalogueContext = {
   effectiveCoverMm: number | null;
@@ -76,13 +76,18 @@ export function validateRoof(planes: PlaneGeometry[], catalogue: CatalogueContex
     }
   }
 
+  // Overlap is measured on the plan outline of each plane, not its bounding box. A hipped
+  // or valley roof has planes whose boxes overlap where the trapezoids only meet along a
+  // hip, and calling that an overlap would make the commonest roof shapes impossible to
+  // capture. What is left is a genuine double count: the same square metre measured twice.
   for (let i = 0; i < planes.length; i += 1) {
     for (let j = i + 1; j < planes.length; j += 1) {
-      if (boundsOverlap(planeBounds(planes[i]), planeBounds(planes[j]))) {
+      const shared = polygonOverlapAreaMm2(planePlanCorners(asRoofPlane(planes[i])), planePlanCorners(asRoofPlane(planes[j])));
+      if (shared > OVERLAP_TOLERANCE_MM2) {
         issues.push({
           ruleId: 'GEO-006',
           severity: 'blocking',
-          message: `Planes ${planes[i].ref} and ${planes[j].ref} overlap in plan view.`,
+          message: `Planes ${planes[i].ref} and ${planes[j].ref} cover ${(shared / 1_000_000).toFixed(2)} m² of the same plan area: that area would be sheeted and ordered twice.`,
           subjectRef: planes[i].ref,
         });
       }

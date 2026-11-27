@@ -136,7 +136,22 @@ describe('validation', () => {
 
   it('blocks overlapping planes', () => {
     const issues = validateRoof([plane('P1', 3000, 3000), plane('P2', 3000, 3000, 22.5, 1000)], verifiedCatalogue);
-    expect(issues.some((issue) => issue.ruleId === 'GEO-006' && issue.severity === 'blocking')).toBe(true);
+    const overlap = issues.find((issue) => issue.ruleId === 'GEO-006');
+    expect(overlap?.severity).toBe('blocking');
+    expect(overlap?.message).toContain('m² of the same plan area');
+  });
+
+  it('accepts a hipped roof, whose plane boxes overlap but whose surfaces only meet at hips', () => {
+    // 6000 x 4000 hip: the front and side planes have overlapping bounding boxes, which is
+    // the commonest roof there is, so a box test would make it impossible to capture.
+    const hip = [
+      { ...plane('F', 6000, 2828, 45), yMm: 2000, fall: 'south' as const, ridgeWidthMm: 2000 },
+      { ...plane('B', 6000, 2828, 45), yMm: 0, fall: 'north' as const, ridgeWidthMm: 2000 },
+      { ...plane('L', 4000, 2828, 45), yMm: 0, fall: 'west' as const, ridgeWidthMm: 0 },
+      { ...plane('R', 4000, 2828, 45), xMm: 4000, yMm: 0, fall: 'east' as const, ridgeWidthMm: 0 },
+    ];
+    const issues = validateRoof(hip, verifiedCatalogue);
+    expect(issues.some((issue) => issue.ruleId === 'GEO-006')).toBe(false);
   });
 
   it('treats below-minimum pitch as blocking when the catalogue is verified', () => {

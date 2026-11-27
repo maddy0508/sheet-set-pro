@@ -37,6 +37,8 @@ export type BomLine = {
   key: string;
   description: string;
   category: BomCategory;
+  /** Cut length for a sheet; absent for anything else. */
+  lengthMm?: number;
   quantityMicro: number;
   unit: string;
   unitPriceCents: number;

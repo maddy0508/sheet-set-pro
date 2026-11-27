@@ -94,6 +94,7 @@ export async function loadWorkspace(): Promise<AppState> {
     payments: [],
     allocations: [],
     snapshots: [],
+    supplierExports: [],
     activity: [],
   } as AppState;
 
