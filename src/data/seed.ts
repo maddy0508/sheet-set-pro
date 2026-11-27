@@ -66,6 +66,10 @@ export function createInitialState(): AppState {
       address: null,
       email: null,
       phone: null,
+      supplierName: null,
+      supplierEmail: null,
+      supplierAccount: null,
+      supplierNotes: null,
       labourRateCentsPerM2: 4500,
       labourCostCentsPerM2: null,
       defaultMarginBp: 2500,
@@ -83,6 +87,7 @@ export function createInitialState(): AppState {
     payments: [],
     allocations: [],
     snapshots: [],
+    supplierExports: [],
     activity: [
       {
         id: 'activity-1',

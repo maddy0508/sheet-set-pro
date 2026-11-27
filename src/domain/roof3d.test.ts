@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   type RoofPlaneInput,
   buildRoofModel,
+  describeRoofForm,
+  planePlanCorners,
+  polygonOverlapAreaMm2,
   effectiveRidgeWidthMm,
   planRiseMm,
   planRunMm,
@@ -227,5 +230,71 @@ describe('sheet boundaries', () => {
 
   it('draws nothing without a cover width', () => {
     expect(sheetBoundaryLines(plane({ id: 'p1', ref: 'P1' }), 0)).toEqual([]);
+  });
+});
+
+describe('plan outlines', () => {
+  const square = [
+    { xMm: 0, yMm: 0 },
+    { xMm: 4000, yMm: 0 },
+    { xMm: 4000, yMm: 4000 },
+    { xMm: 0, yMm: 4000 },
+  ];
+
+  it('measures the area two outlines really share, not their bounding boxes', () => {
+    expect(polygonOverlapAreaMm2(square, square)).toBe(16_000_000);
+    const shifted = square.map((point) => ({ xMm: point.xMm + 2000, yMm: point.yMm }));
+    expect(polygonOverlapAreaMm2(square, shifted)).toBe(8_000_000);
+    const apart = square.map((point) => ({ xMm: point.xMm + 4000, yMm: point.yMm }));
+    expect(polygonOverlapAreaMm2(square, apart)).toBe(0);
+  });
+
+  it('finds no overlap between planes that only abut along an edge', () => {
+    const run = planRunMm(2828, PITCH_45);
+    const first = plane({ id: 'a', ref: 'A', xMm: 0, fall: 'east', lengthMm: 2828, pitchMicrodeg: PITCH_45 });
+    const second = plane({ id: 'b', ref: 'B', xMm: run, fall: 'west', lengthMm: 2828, pitchMicrodeg: PITCH_45 });
+    expect(polygonOverlapAreaMm2(planePlanCorners(first), planePlanCorners(second))).toBe(0);
+  });
+
+  it('reports the same roof captured twice as a full overlap', () => {
+    const only = plane({ id: 'a', ref: 'A', fall: 'south' });
+    const model = buildRoofModel([only]);
+    expect(polygonOverlapAreaMm2(planePlanCorners(only), planePlanCorners(only))).toBe(model.surfaces[0].planAreaMm2);
+  });
+});
+
+describe('roof form', () => {
+  it('names a single plane a skillion', () => {
+    const model = buildRoofModel([plane({ id: 'p1', ref: 'P1' })]);
+    expect(describeRoofForm(model).form).toBe('skillion');
+    expect(describeRoofForm(model).label).toBe('Skillion');
+  });
+
+  it('names two planes falling away from a ridge a gable', () => {
+    const run = planRunMm(3600, PITCH_22_5);
+    const model = buildRoofModel([
+      plane({ id: 'p1', ref: 'P1', xMm: 0, fall: 'west' }),
+      plane({ id: 'p2', ref: 'P2', xMm: run, fall: 'east' }),
+    ]);
+    expect(describeRoofForm(model).label).toBe('Gable');
+    expect(describeRoofForm(model).detail).toContain('2 planes');
+  });
+
+  it('names a four-plane roof hipped, and counts its hips', () => {
+    const slope = 2828;
+    const model = buildRoofModel([
+      plane({ id: 'front', ref: 'F', xMm: 0, yMm: 2000, widthMm: 6000, lengthMm: slope, pitchMicrodeg: PITCH_45, fall: 'south', ridgeWidthMm: 2000 }),
+      plane({ id: 'back', ref: 'B', xMm: 0, yMm: 0, widthMm: 6000, lengthMm: slope, pitchMicrodeg: PITCH_45, fall: 'north', ridgeWidthMm: 2000 }),
+      plane({ id: 'left', ref: 'L', xMm: 0, yMm: 0, widthMm: 4000, lengthMm: slope, pitchMicrodeg: PITCH_45, fall: 'west', ridgeWidthMm: 0 }),
+      plane({ id: 'right', ref: 'R', xMm: 4000, yMm: 0, widthMm: 4000, lengthMm: slope, pitchMicrodeg: PITCH_45, fall: 'east', ridgeWidthMm: 0 }),
+    ]);
+    const form = describeRoofForm(model);
+    expect(form.label).toBe('Hipped');
+    expect(form.detail).toContain('4 hips');
+  });
+
+  it('says so when nothing has been captured', () => {
+    const model = buildRoofModel([]);
+    expect(describeRoofForm(model).label).toBe('No roof');
   });
 });

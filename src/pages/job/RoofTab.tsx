@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/data/store';
 import { planeAreaMm2 } from '@/domain/geometry';
-import { asRoofPlane, buildRoofModel } from '@/domain/roof3d';
+import { asRoofPlane, buildRoofModel, describeRoofForm } from '@/domain/roof3d';
 import { cosMicro } from '@/domain/trig';
 import { degToMicro, formatAreaM2, formatMm, microToDeg, mulDivRound } from '@/domain/units';
 import type { FlashingKind } from '@/domain/types';
@@ -34,6 +34,7 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
 
   // The plan is drawn from the same model the 3D view and the calculations use.
   const model = useMemo(() => buildRoofModel(planes.map(asRoofPlane)), [planes]);
+  const form = useMemo(() => describeRoofForm(model), [model]);
 
   const extent = useMemo(() => {
     const { minXMm, minYMm, maxXMm, maxYMm } = model.bounds;
@@ -228,6 +229,11 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
           tight
           action={
             <div className="toolbar">
+              {planes.length > 0 && (
+                <Badge tone={form.form === 'complex' ? 'warn' : 'info'} title={form.detail}>
+                  {form.label}
+                </Badge>
+              )}
               <Badge tone={planes.length > 0 ? 'cyan' : 'neutral'}>{planes.length} planes</Badge>
               <button type="button" className="btn btn-secondary btn-sm" onClick={addManual}>
                 <IconPlus size={13} />

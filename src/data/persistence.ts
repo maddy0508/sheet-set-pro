@@ -17,6 +17,7 @@ import type {
   Payment,
   Plane,
   Quote,
+  SupplierExport,
 } from './types';
 
 /**
@@ -45,6 +46,7 @@ export type Entities = {
   payments: Payment;
   allocations: Allocation;
   snapshots: CalcSnapshot;
+  supplierExports: SupplierExport;
   activity: ActivityEvent;
 };
 
@@ -123,6 +125,8 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
       profile_id: entity.profileId,
       crs_epsg: entity.crsEpsg,
       operator_approved: entity.operatorApproved,
+      colour: entity.colour,
+      required_by: entity.requiredBy,
       created_at: entity.createdAt,
       updated_at: entity.updatedAt,
     }),
@@ -138,6 +142,8 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
       profileId: textOrNull(row.profile_id),
       crsEpsg: intOrNull(row.crs_epsg),
       operatorApproved: bool(row.operator_approved),
+      colour: textOrNull(row.colour),
+      requiredBy: textOrNull(row.required_by),
       createdAt: text(row.created_at),
       updatedAt: text(row.updated_at),
     }),
@@ -485,6 +491,46 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
     }),
   },
 
+  supplierExports: {
+    table: 'supplier_exports',
+    orderBy: { column: 'created_at', ascending: false },
+    toRow: (entity, businessId) => ({
+      id: entity.id,
+      business_id: businessId,
+      job_id: entity.jobId,
+      number: entity.number,
+      generated_at: entity.generatedAt,
+      adapter: entity.adapter,
+      format: entity.format,
+      status: entity.status,
+      bom_fingerprint: entity.bomFingerprint,
+      calc_input_fingerprint: entity.calcInputFingerprint,
+      calc_output_fingerprint: entity.calcOutputFingerprint,
+      engine_version: entity.engineVersion,
+      total_sheets: entity.totalSheets,
+      total_sheet_length_mm: entity.totalSheetLengthMm,
+      payload: entity.payload,
+      created_at: entity.createdAt,
+    }),
+    fromRow: (row) => ({
+      id: text(row.id),
+      jobId: text(row.job_id),
+      number: text(row.number),
+      generatedAt: text(row.generated_at),
+      adapter: text(row.adapter),
+      format: text(row.format) === 'pdf' ? 'pdf' : 'csv',
+      status: text(row.status) === 'READY' ? 'READY' : 'BLOCKED',
+      bomFingerprint: text(row.bom_fingerprint),
+      calcInputFingerprint: textOrNull(row.calc_input_fingerprint),
+      calcOutputFingerprint: textOrNull(row.calc_output_fingerprint),
+      engineVersion: textOrNull(row.engine_version),
+      totalSheets: num(row.total_sheets),
+      totalSheetLengthMm: num(row.total_sheet_length_mm),
+      payload: (row.payload ?? {}) as SupplierExport['payload'],
+      createdAt: text(row.created_at),
+    }),
+  },
+
   activity: {
     table: 'activity_events',
     orderBy: { column: 'at', ascending: false },
@@ -580,6 +626,10 @@ export function companyToRow(company: AppState['company']): Row {
     address: company.address,
     email: company.email,
     phone: company.phone,
+    supplier_name: company.supplierName,
+    supplier_email: company.supplierEmail,
+    supplier_account: company.supplierAccount,
+    supplier_notes: company.supplierNotes,
     labour_rate_cents_per_m2: company.labourRateCentsPerM2,
     labour_cost_cents_per_m2: company.labourCostCentsPerM2,
     default_margin_bp: company.defaultMarginBp,
@@ -598,6 +648,10 @@ export function companyFromRow(row: Row): AppState['company'] {
     address: textOrNull(row.address),
     email: textOrNull(row.email),
     phone: textOrNull(row.phone),
+    supplierName: textOrNull(row.supplier_name),
+    supplierEmail: textOrNull(row.supplier_email),
+    supplierAccount: textOrNull(row.supplier_account),
+    supplierNotes: textOrNull(row.supplier_notes),
     labourRateCentsPerM2: num(row.labour_rate_cents_per_m2),
     labourCostCentsPerM2: intOrNull(row.labour_cost_cents_per_m2),
     defaultMarginBp: num(row.default_margin_bp),

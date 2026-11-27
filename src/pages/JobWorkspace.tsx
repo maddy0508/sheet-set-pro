@@ -11,14 +11,36 @@ import { MeasureTab } from './job/MeasureTab';
 import { RoofTab } from './job/RoofTab';
 import { LayoutTab } from './job/LayoutTab';
 import { MaterialsTab } from './job/MaterialsTab';
+import { OrderTab } from './job/OrderTab';
 import { CommercialTab } from './job/CommercialTab';
 import { BillingTab } from './job/BillingTab';
 
 const ModelTab = lazy(() => import('./job/ModelTab').then((module) => ({ default: module.ModelTab })));
 
-type TabId = 'overview' | 'measure' | 'roof' | 'model' | 'layout' | 'materials' | 'commercial' | 'billing' | 'activity';
+type TabId =
+  | 'overview'
+  | 'measure'
+  | 'roof'
+  | 'model'
+  | 'layout'
+  | 'materials'
+  | 'order'
+  | 'commercial'
+  | 'billing'
+  | 'activity';
 
-const TAB_IDS: TabId[] = ['overview', 'measure', 'roof', 'model', 'layout', 'materials', 'commercial', 'billing', 'activity'];
+const TAB_IDS: TabId[] = [
+  'overview',
+  'measure',
+  'roof',
+  'model',
+  'layout',
+  'materials',
+  'order',
+  'commercial',
+  'billing',
+  'activity',
+];
 
 export function JobWorkspace() {
   const { jobId = '' } = useParams();
@@ -161,6 +183,11 @@ export function JobWorkspace() {
             { id: 'model', label: '3D model', count: planes.length },
             { id: 'layout', label: 'Sheet layout' },
             { id: 'materials', label: 'Materials', count: computation.bom.lines.length },
+            {
+              id: 'order',
+              label: 'Supplier order',
+              count: state.supplierExports.filter((entry) => entry.jobId === job.id).length,
+            },
             { id: 'commercial', label: 'Estimate & quote', count: quotes.length },
             { id: 'billing', label: 'Invoice & payments', count: invoices.length },
             { id: 'activity', label: 'Activity' },
@@ -329,6 +356,7 @@ export function JobWorkspace() {
           )}
           {activeTab === 'layout' && <LayoutTab {...tabProps} />}
           {activeTab === 'materials' && <MaterialsTab {...tabProps} />}
+          {activeTab === 'order' && <OrderTab {...tabProps} />}
           {activeTab === 'commercial' && <CommercialTab {...tabProps} />}
           {activeTab === 'billing' && <BillingTab {...tabProps} />}
 

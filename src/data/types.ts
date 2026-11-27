@@ -1,3 +1,5 @@
+import type { SupplierOrder } from '@/domain/supplier';
+
 import type { EvidenceKind, FlashingKind, MeasurementGrade, PlaneGeometry, SourceType } from '@/domain/types';
 
 export type Id = string;
@@ -13,6 +15,11 @@ export type Company = {
   address: string | null;
   email: string | null;
   phone: string | null;
+  /** Who a material order is sent to. Null until the operator records it. */
+  supplierName: string | null;
+  supplierEmail: string | null;
+  supplierAccount: string | null;
+  supplierNotes: string | null;
   labourRateCentsPerM2: number;
   /** What an installed square metre costs the business. Null until the operator records it. */
   labourCostCentsPerM2: number | null;
@@ -55,6 +62,10 @@ export type Job = {
   profileId: Id | null;
   crsEpsg: number | null;
   operatorApproved: boolean;
+  /** Roof colour the customer chose. Null until recorded: a colour is never assumed. */
+  colour: string | null;
+  /** Date the material is needed on site. Null until recorded. */
+  requiredBy: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -258,6 +269,31 @@ export type ActivityEvent = {
   detail: string;
 };
 
+export type SupplierExportFormat = 'pdf' | 'csv';
+
+/**
+ * One supplier order exactly as it was written out. History: never edited, never deleted.
+ * `payload` is the whole order, so the record answers "what did we send?" without
+ * rebuilding it from records that have moved since.
+ */
+export type SupplierExport = {
+  id: Id;
+  jobId: Id;
+  number: string;
+  generatedAt: string;
+  adapter: string;
+  format: SupplierExportFormat;
+  status: 'READY' | 'BLOCKED';
+  bomFingerprint: string;
+  calcInputFingerprint: string | null;
+  calcOutputFingerprint: string | null;
+  engineVersion: string | null;
+  totalSheets: number;
+  totalSheetLengthMm: number;
+  payload: SupplierOrder;
+  createdAt: string;
+};
+
 export type AppState = {
   version: number;
   company: Company;
@@ -274,5 +310,6 @@ export type AppState = {
   payments: Payment[];
   allocations: Allocation[];
   snapshots: CalcSnapshot[];
+  supplierExports: SupplierExport[];
   activity: ActivityEvent[];
 };

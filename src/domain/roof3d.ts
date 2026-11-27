@@ -97,7 +97,7 @@ export type RoofModel = {
 };
 
 export type PlaneLike = {
-  id: string;
+  id?: string;
   ref: string;
   xMm: number;
   yMm: number;
@@ -114,7 +114,7 @@ export type PlaneLike = {
  * the same default.
  */
 export function asRoofPlane(plane: PlaneLike): RoofPlaneInput {
-  return { ...plane, fall: plane.fall ?? 'south' };
+  return { ...plane, id: plane.id ?? '', fall: plane.fall ?? 'south' };
 }
 
 /** Horizontal distance covered by a slope length at a pitch. */
@@ -170,7 +170,7 @@ export function surfaceZ(plane: RoofPlaneInput, xMm: number, yMm: number): numbe
   }
 }
 
-type PlanPoint = { xMm: number; yMm: number };
+export type PlanPoint = { xMm: number; yMm: number };
 
 type Side = {
   planeIndex: number;
@@ -472,6 +472,143 @@ export function buildRoofModel(planes: RoofPlaneInput[]): RoofModel {
     planAreaMm2: surfaces.reduce((sum, surface) => sum + surface.planAreaMm2, 0),
     slopeAreaMm2: surfaces.reduce((sum, surface) => sum + surface.slopeAreaMm2, 0),
     totals,
+  };
+}
+
+
+/** The plane's plan outline, ridge start, ridge end, eave end, eave start. */
+export function planePlanCorners(plane: RoofPlaneInput): PlanPoint[] {
+  return planeCorners(plane);
+}
+
+function signedArea(points: PlanPoint[]): number {
+  let sum = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    sum += current.xMm * next.yMm - next.xMm * current.yMm;
+  }
+  return sum / 2;
+}
+
+function counterClockwise(points: PlanPoint[]): PlanPoint[] {
+  return signedArea(points) < 0 ? [...points].reverse() : points;
+}
+
+/**
+ * Area covered by two plan outlines at once.
+ *
+ * Two planes that abut along an edge share a line, not an area, so a real overlap means the
+ * same roof has been captured twice: the area, the sheets and the materials would all be
+ * counted double. The outlines are clipped with integer coordinates and rounded back to
+ * millimetres, so the result is a validation figure, never a manufacturing dimension.
+ */
+export function polygonOverlapAreaMm2(first: PlanPoint[], second: PlanPoint[]): number {
+  const subject = counterClockwise(first);
+  const clip = counterClockwise(second);
+  let output = subject;
+
+  for (let edge = 0; edge < clip.length && output.length > 0; edge += 1) {
+    const from = clip[edge];
+    const to = clip[(edge + 1) % clip.length];
+    const input = output;
+    output = [];
+    const inside = (point: PlanPoint) => cross(sub(to, from), sub(point, from)) >= 0;
+    const intersect = (start: PlanPoint, end: PlanPoint): PlanPoint => {
+      const a1 = to.yMm - from.yMm;
+      const b1 = from.xMm - to.xMm;
+      const c1 = a1 * from.xMm + b1 * from.yMm;
+      const a2 = end.yMm - start.yMm;
+      const b2 = start.xMm - end.xMm;
+      const c2 = a2 * start.xMm + b2 * start.yMm;
+      const determinant = a1 * b2 - a2 * b1;
+      if (determinant === 0) return end;
+      return {
+        xMm: Math.round((b2 * c1 - b1 * c2) / determinant),
+        yMm: Math.round((a1 * c2 - a2 * c1) / determinant),
+      };
+    };
+
+    for (let index = 0; index < input.length; index += 1) {
+      const current = input[index];
+      const previous = input[(index + input.length - 1) % input.length];
+      const currentInside = inside(current);
+      const previousInside = inside(previous);
+      if (currentInside) {
+        if (!previousInside) output.push(intersect(previous, current));
+        output.push(current);
+      } else if (previousInside) {
+        output.push(intersect(previous, current));
+      }
+    }
+  }
+
+  return output.length < 3 ? 0 : Math.abs(signedArea(output));
+}
+
+/** Two planes that cover the same plan area to within a millimetre are the same roof twice. */
+export const OVERLAP_TOLERANCE_MM2 = 1_000;
+
+export type RoofForm = {
+  form: 'skillion' | 'gable' | 'hip' | 'hip-and-valley' | 'complex';
+  label: string;
+  detail: string;
+};
+
+/**
+ * The roof form as the trade names it, from the edges the model actually found. It is a
+ * description of the geometry, not a classification of the building: a roofer reads it to
+ * confirm the capture is the roof they walked.
+ */
+export function describeRoofForm(model: RoofModel): RoofForm {
+  const surfaces = model.surfaces.length;
+  const hips = model.edges.filter((edge) => edge.kind === 'hip').length;
+  const valleys = model.edges.filter((edge) => edge.kind === 'valley').length;
+  const ridges = model.edges.filter((edge) => edge.kind === 'ridge').length;
+  const eaves = model.edges.filter((edge) => edge.kind === 'eave').length;
+
+  if (surfaces === 0) {
+    return { form: 'skillion', label: 'No roof', detail: 'No roof planes have been captured.' };
+  }
+  if (surfaces === 1) {
+    return {
+      form: 'skillion',
+      label: 'Skillion',
+      detail: `One plane falling ${model.surfaces[0].fall}, ${eaves} eave${eaves === 1 ? '' : 's'} and ${model.totals.barge > 0 ? 'two rakes' : 'no open rakes'}.`,
+    };
+  }
+  if (valleys > 0 && hips > 0) {
+    return {
+      form: 'hip-and-valley',
+      label: 'Hip and valley',
+      detail: `${surfaces} planes, ${ridges} ridge${ridges === 1 ? '' : 's'}, ${hips} hips, ${valleys} valley${valleys === 1 ? '' : 's'}.`,
+    };
+  }
+  if (valleys > 0) {
+    return {
+      form: 'complex',
+      label: 'Gabled with valleys',
+      detail: `${surfaces} planes, ${ridges} ridge${ridges === 1 ? '' : 's'}, ${valleys} valley${valleys === 1 ? '' : 's'}.`,
+    };
+  }
+  if (hips > 0) {
+    return {
+      form: 'hip',
+      label: 'Hipped',
+      detail: `${surfaces} planes, ${ridges} ridge${ridges === 1 ? '' : 's'}, ${hips} hips, no valleys.`,
+    };
+  }
+  if (ridges > 0) {
+    return {
+      form: 'gable',
+      label: 'Gable',
+      detail: `${surfaces} planes falling away from ${ridges} ridge${ridges === 1 ? '' : 's'}.`,
+    };
+  }
+  return {
+    form: 'complex',
+    label: 'Unclassified',
+    detail: `${surfaces} planes with no ridge, hip or valley between them.`,
   };
 }
 

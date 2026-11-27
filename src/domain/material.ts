@@ -68,6 +68,7 @@ export function buildBom(params: {
       key: `sheet-${lengthMm}`,
       description: `${profile.name} sheet — ${lengthMm} mm`,
       category: 'sheet',
+      lengthMm,
       quantityMicro: quantity * 1_000_000,
       unit: 'ea',
       unitPriceCents: mulDivRound(sheetPriceCentsPerM, lengthMm, 1000),

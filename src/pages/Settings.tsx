@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import type { AppState } from '@/data/types';
 import { useStore } from '@/data/store';
 import { formatCents } from '@/domain/units';
 import { Badge, Card, Field, Notice, PageHead, SelectInput, TextInput, UnitInput } from '@/ui';
-import { IconAlert } from '@/ui/icons';
+import { IconAlert, IconCheck, IconDoc } from '@/ui/icons';
+import { backupJson, createBackup, readBackup, restoreBlocker, summariseBackup, type WorkspaceBackup } from '@/lib/backup';
 
 export function SettingsPage() {
   const { state, actions, sync } = useStore();
@@ -20,6 +22,10 @@ export function SettingsPage() {
     labourRate: String(company.labourRateCentsPerM2),
     labourCost: company.labourCostCentsPerM2 === null ? '' : String(company.labourCostCentsPerM2),
     defaultMarginBp: String(company.defaultMarginBp),
+    supplierName: company.supplierName ?? '',
+    supplierEmail: company.supplierEmail ?? '',
+    supplierAccount: company.supplierAccount ?? '',
+    supplierNotes: company.supplierNotes ?? '',
   });
 
   const save = () => {
@@ -36,6 +42,10 @@ export function SettingsPage() {
       labourRateCentsPerM2: Number(draft.labourRate) || 0,
       labourCostCentsPerM2: draft.labourCost.trim() === '' ? null : Number(draft.labourCost) || 0,
       defaultMarginBp: Number(draft.defaultMarginBp) || 0,
+      supplierName: draft.supplierName.trim() || null,
+      supplierEmail: draft.supplierEmail.trim() || null,
+      supplierAccount: draft.supplierAccount.trim() || null,
+      supplierNotes: draft.supplierNotes.trim() || null,
     });
   };
 
@@ -45,6 +55,7 @@ export function SettingsPage() {
     company.gstRegistered === null ? 'GST registration' : null,
     !company.gstRateConfirmed ? 'GST rate' : null,
     company.address === null ? 'business address' : null,
+    company.supplierName === null ? 'material supplier' : null,
   ].filter(Boolean) as string[];
 
   return (
@@ -147,6 +158,46 @@ export function SettingsPage() {
             </div>
           </Card>
 
+          <Card
+            title="Material supplier"
+            subtitle="Who material orders are sent to. Nothing here is inferred from the catalogue."
+          >
+            <div className="form-row">
+              <Field label="Supplier name" hint={company.supplierName === null ? 'Not configured' : undefined}>
+                <TextInput
+                  value={draft.supplierName}
+                  onChange={(e) => setDraft({ ...draft, supplierName: e.target.value })}
+                  placeholder="Not configured"
+                />
+              </Field>
+              <Field label="Ordering email" hint={company.supplierEmail === null ? 'Not configured' : undefined}>
+                <TextInput
+                  value={draft.supplierEmail}
+                  onChange={(e) => setDraft({ ...draft, supplierEmail: e.target.value })}
+                  placeholder="orders@example.com"
+                />
+              </Field>
+              <Field label="Account reference" hint="Your account with the supplier.">
+                <TextInput
+                  value={draft.supplierAccount}
+                  onChange={(e) => setDraft({ ...draft, supplierAccount: e.target.value })}
+                  placeholder="Optional"
+                />
+              </Field>
+            </div>
+            <Field label="Delivery notes" hint="Printed on every order, e.g. call before delivery.">
+              <TextInput
+                value={draft.supplierNotes}
+                onChange={(e) => setDraft({ ...draft, supplierNotes: e.target.value })}
+                placeholder="Optional"
+              />
+            </Field>
+            <div className="small faint" style={{ marginTop: 10 }}>
+              Orders are issued from the job’s supplier tab. An order never carries prices, and an unverified
+              specification is stamped NOT FOR MANUFACTURE.
+            </div>
+          </Card>
+
           <Card title="Commercial defaults" subtitle="Used to seed estimates. Every revision records what it used.">
             <div className="form-row">
               <Field label="Labour rate" hint="Cents per square metre.">
@@ -194,6 +245,14 @@ export function SettingsPage() {
             </dl>
           </Card>
 
+          <Card title="Backup and restore" subtitle="A complete copy of this workspace, in one file">
+            <BackupPanel
+              state={state}
+              mode={sync.mode}
+              onRestore={(backup) => actions.restoreWorkspace(backup.state)}
+            />
+          </Card>
+
           <Card title="Data provenance">
             <div className="grid" style={{ gap: 10 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -233,5 +292,128 @@ export function SettingsPage() {
         </div>
       </div>
     </>
+  );
+}
+
+function BackupPanel({
+  state,
+  mode,
+  onRestore,
+}: {
+  state: AppState;
+  mode: 'local' | 'remote';
+  onRestore: (backup: WorkspaceBackup) => { ok: boolean; message?: string };
+}) {
+  const [pending, setPending] = useState<WorkspaceBackup | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [problems, setProblems] = useState<string[]>([]);
+  const [outcome, setOutcome] = useState('');
+
+  const download = () => {
+    const backup = createBackup(state);
+    const blob = new Blob([backupJson(backup)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `sheet-set-pro-backup-${backup.exportedAt.slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    setOutcome(`Backup written: ${summariseBackup(backup) || 'an empty workspace'}.`);
+  };
+
+  const choose = async (file: File | null) => {
+    setPending(null);
+    setProblems([]);
+    setWarnings([]);
+    setOutcome('');
+    if (!file) return;
+    const result = readBackup(await file.text());
+    if (!result.ok) {
+      setProblems(result.problems);
+      return;
+    }
+    setPending(result.backup);
+    setWarnings(result.warnings);
+  };
+
+  const restore = () => {
+    if (!pending) return;
+    const result = onRestore(pending);
+    if (!result.ok) {
+      setProblems([result.message ?? 'The restore was refused.']);
+      return;
+    }
+    setPending(null);
+    setWarnings([]);
+    setOutcome('Workspace restored from the backup.');
+  };
+
+  const blocker = restoreBlocker(state, mode);
+
+  return (
+    <div className="grid" style={{ gap: 12 }}>
+      <div className="small muted" style={{ lineHeight: 1.6 }}>
+        The backup holds every record exactly as stored: customers, jobs, roof geometry, measurements and their
+        evidence, calculations, quotes, invoices, payments and the activity log. Restore it into an empty workspace to
+        bring a workspace back.
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={download}>
+          <IconDoc size={14} />
+          Download backup
+        </button>
+        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+          Choose backup file
+          <input
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={(event) => void choose(event.target.files?.[0] ?? null)}
+          />
+        </label>
+      </div>
+
+      {problems.length > 0 && (
+        <Notice tone="danger" icon={<IconAlert />}>
+          <strong>This file cannot be restored.</strong>
+          <ul style={{ margin: '6px 0 0 16px' }}>
+            {problems.slice(0, 8).map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+        </Notice>
+      )}
+
+      {pending && (
+        <Notice tone="warn" icon={<IconAlert />}>
+          <strong>{summariseBackup(pending) || 'An empty workspace'}.</strong> Written{' '}
+          {pending.exportedAt.slice(0, 10)}.
+          {warnings.map((warning) => (
+            <div key={warning} className="small" style={{ marginTop: 6 }}>
+              {warning}
+            </div>
+          ))}
+          {blocker ? (
+            <div className="small" style={{ marginTop: 8 }}>
+              {blocker}
+            </div>
+          ) : (
+            <div style={{ marginTop: 8 }}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={restore}>
+                Replace this workspace with the backup
+              </button>
+            </div>
+          )}
+        </Notice>
+      )}
+
+      {outcome && (
+        <Notice tone="ok" icon={<IconCheck />}>
+          {outcome}
+        </Notice>
+      )}
+    </div>
   );
 }
