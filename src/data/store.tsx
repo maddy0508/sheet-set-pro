@@ -24,6 +24,7 @@ import { loadWorkspace, persistStateChange } from './remote';
 import { computeTotals } from '@/domain/pricing';
 import { checkAllocation, checkInvoiceVoid, checkPaymentAmount, decideGst } from '@/domain/commercial';
 import { fingerprint } from '@/domain/units';
+import { captureInvoiceSnapshot, captureQuoteSnapshot } from '@/lib/document';
 import type { EvidenceKind, FlashingKind, MeasurementGrade, SourceType } from '@/domain/types';
 import { normaliseTimestamp } from '@/lib/time';
 
@@ -107,6 +108,12 @@ export type Actions = {
   resetWorkspace: () => void;
   loadSampleJob: () => void;
 };
+
+/** Provenance is captured with the document, so it must reflect the job's own profile. */
+function isCatalogueVerified(state: AppState, job: Job): boolean {
+  const profile = state.catalogue.find((candidate) => candidate.id === job.profileId);
+  return profile?.verificationState === 'VERIFIED';
+}
 
 export type SyncState = {
   mode: 'local' | 'remote';
@@ -466,7 +473,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             estimate.lines.map((line) => ({ qtyMicro: line.qtyMicro, unitPriceCents: line.unitPriceCents })),
             { gstRateBp: prev.company.gstRateBp, gstApplied },
           );
-          const quote: Quote = {
+          const job = prev.jobs.find((j) => j.id === jobId);
+          if (!job) return prev;
+          const draft: Quote = {
             id: uid(),
             jobId,
             number: nextDocNumber('Q', prev.quotes),
@@ -482,9 +491,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             gstRateBp: prev.company.gstRateBp,
             issuedAt: nowIso(),
             validUntil,
-            fingerprint: fingerprint({ estimateId, lines: estimate.lines, gstApplied }),
+            fingerprint: '',
+            snapshot: null,
             createdAt: nowIso(),
           };
+          const snapshot = captureQuoteSnapshot({
+            quote: draft,
+            job,
+            customer: prev.customers.find((c) => c.id === job.customerId),
+            company: prev.company,
+            catalogueVerified: isCatalogueVerified(prev, job),
+          });
+          const quote: Quote = { ...draft, snapshot, fingerprint: snapshot.fingerprint };
           return {
             ...prev,
             quotes: [quote, ...prev.quotes],
@@ -526,6 +544,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             dueDate: null,
             voidReason: null,
             fingerprint: '',
+            snapshot: null,
             createdAt: nowIso(),
           };
           return {
@@ -550,7 +569,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             invoice.lines.map((line) => ({ qtyMicro: line.qtyMicro, unitPriceCents: line.unitPriceCents })),
             { gstRateBp: prev.company.gstRateBp, gstApplied },
           );
-          const issued: Invoice = {
+          const job = prev.jobs.find((j) => j.id === invoice.jobId);
+          if (!job) return prev;
+          const drafted: Invoice = {
             ...invoice,
             status: 'issued',
             totals: { subtotalCents: totals.subtotalCents, gstCents: totals.gstCents, totalCents: totals.totalCents },
@@ -558,8 +579,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             gstRateBp: prev.company.gstRateBp,
             issuedAt: nowIso(),
             dueDate: new Date(Date.now() + 14 * 86400000).toISOString(),
-            fingerprint: fingerprint({ number: invoice.number, lines: invoice.lines, totals }),
+            fingerprint: '',
+            snapshot: null,
           };
+          const snapshot = captureInvoiceSnapshot({
+            invoice: drafted,
+            job,
+            customer: prev.customers.find((c) => c.id === job.customerId),
+            company: prev.company,
+            catalogueVerified: isCatalogueVerified(prev, job),
+          });
+          const issued: Invoice = { ...drafted, snapshot, fingerprint: snapshot.fingerprint };
           return {
             ...prev,
             invoices: prev.invoices.map((i) => (i.id === invoiceId ? issued : i)),

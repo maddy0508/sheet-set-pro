@@ -5,6 +5,7 @@ import { Badge, Card, EmptyState, Field, Modal, Notice, SelectInput, Stat, TextI
 import { IconAlert, IconCash, IconCheck, IconDoc } from '@/ui/icons';
 import { invoiceDocument } from '@/lib/document';
 import { downloadPdf } from '@/lib/pdf';
+import type { Invoice } from '@/data/types';
 import type { JobTabProps } from './types';
 
 export function BillingTab({ job, profile }: JobTabProps) {
@@ -56,15 +57,29 @@ export function BillingTab({ job, profile }: JobTabProps) {
     const invoiceLeft = invoice.totals.totalCents - (allocationSums.byInvoice.get(invoice.id) ?? 0);
     return Math.max(0, Math.min(paymentLeft, invoiceLeft));
   })();
+  const balanceOf = (invoice: Invoice): number => {
+    const allocated = allocationSums.byInvoice.get(invoice.id) ?? 0;
+    if (invoice.status === 'voided') return 0;
+    if (invoice.status === 'issued') return invoice.totals.totalCents - allocated;
+    return invoice.totals.totalCents;
+  };
   const previewInvoice = invoices.find((i) => i.id === previewId) ?? null;
+  const previewDoc = previewInvoice
+    ? invoiceDocument({
+        invoice: previewInvoice,
+        job,
+        customer,
+        company,
+        catalogueVerified: profile?.verificationState === 'VERIFIED',
+        balanceCents: balanceOf(previewInvoice),
+      })
+    : null;
   const acceptedQuote = quotes.find((q) => q.status === 'accepted') ?? null;
 
   const saveInvoicePdf = (invoiceId: string) => {
     const invoice = invoices.find((candidate) => candidate.id === invoiceId);
     if (!invoice) return;
-    const allocated = allocationSums.byInvoice.get(invoice.id) ?? 0;
-    const balanceCents =
-      invoice.status === 'voided' ? 0 : invoice.status === 'issued' ? invoice.totals.totalCents - allocated : invoice.totals.totalCents;
+    const balanceCents = balanceOf(invoice);
     setPdfError('');
     setPdfNotice('');
     void downloadPdf(
@@ -409,30 +424,34 @@ export function BillingTab({ job, profile }: JobTabProps) {
           </div>
         }
       >
-        {previewInvoice && (
+        {previewDoc && (
           <div className="doc-preview">
             <div className="doc-head">
               <div>
-                <h2>{company.displayName}</h2>
+                <h2>{previewDoc.business.name}</h2>
                 <div className="small" style={{ marginTop: 4, color: '#4d5c69' }}>
-                  {company.address ?? 'Business address not confirmed'}
-                  <br />
-                  {company.abn ? `ABN ${company.abn}` : 'ABN not confirmed'}
+                  {previewDoc.business.detail.map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
                 </div>
               </div>
               <div className="doc-meta">
                 <strong>
-                  {previewInvoice.gstRegisteredSnapshot === true ? 'TAX INVOICE' : 'INVOICE'} {previewInvoice.number}
+                  {previewDoc.heading} {previewDoc.number}
                 </strong>
                 <br />
-                Issued {previewInvoice.issuedAt ? new Date(previewInvoice.issuedAt).toLocaleDateString('en-AU') : '—'}
+                Issued {previewDoc.issuedAt ? new Date(previewDoc.issuedAt).toLocaleDateString('en-AU') : '—'}
                 <br />
-                Due {previewInvoice.dueDate ? new Date(previewInvoice.dueDate).toLocaleDateString('en-AU') : '—'}
+                Due {previewDoc.dueDate ? new Date(previewDoc.dueDate).toLocaleDateString('en-AU') : '—'}
               </div>
             </div>
             <div style={{ marginBottom: 12 }}>
-              <strong>{customer?.name ?? 'Customer'}</strong>
-              <div style={{ color: '#4d5c69' }}>{customer?.address || job.siteAddress || 'Address not recorded'}</div>
+              <strong>{previewDoc.customer.name}</strong>
+              {previewDoc.customer.detail.map((line) => (
+                <div key={line} style={{ color: '#4d5c69' }}>
+                  {line}
+                </div>
+              ))}
             </div>
             <table className="doc-table">
               <thead>
@@ -444,14 +463,14 @@ export function BillingTab({ job, profile }: JobTabProps) {
                 </tr>
               </thead>
               <tbody>
-                {previewInvoice.lines.map((line) => (
-                  <tr key={line.key}>
+                {previewDoc.lines.map((line, index) => (
+                  <tr key={`${line.description}-${index}`}>
                     <td>{line.description}</td>
                     <td className="num">
                       {(line.qtyMicro / 1_000_000).toLocaleString('en-AU', { maximumFractionDigits: 2 })} {line.unit}
                     </td>
                     <td className="num">{formatCents(line.unitPriceCents)}</td>
-                    <td className="num">{formatCents(Math.round((line.qtyMicro * line.unitPriceCents) / 1_000_000))}</td>
+                    <td className="num">{formatCents(line.amountCents)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -459,21 +478,40 @@ export function BillingTab({ job, profile }: JobTabProps) {
             <div className="doc-totals">
               <div>
                 <span>Subtotal</span>
-                <span>{formatCents(previewInvoice.totals.subtotalCents)}</span>
+                <span>{formatCents(previewDoc.totals.subtotalCents)}</span>
               </div>
               <div>
-                <span>GST {previewInvoice.gstRegisteredSnapshot === true ? `(${(previewInvoice.gstRateBp / 100).toFixed(2)}%)` : '(not applied)'}</span>
-                <span>{formatCents(previewInvoice.totals.gstCents)}</span>
+                <span>GST {previewDoc.totals.gstApplied ? `(${(previewDoc.totals.gstRateBp / 100).toFixed(2)}%)` : '(not applied)'}</span>
+                <span>{formatCents(previewDoc.totals.gstCents)}</span>
               </div>
               <div className="grand">
                 <span>Total due</span>
-                <span>{formatCents(previewInvoice.totals.totalCents)}</span>
+                <span>{formatCents(previewDoc.totals.totalCents)}</span>
               </div>
+              {previewDoc.balanceCents !== null && previewDoc.balanceCents !== previewDoc.totals.totalCents && (
+                <div>
+                  <span>Outstanding balance (current)</span>
+                  <span>{formatCents(previewDoc.balanceCents)}</span>
+                </div>
+              )}
             </div>
             <div className="doc-stamp">
-              {previewInvoice.status === 'voided' && <strong>VOIDED — {previewInvoice.voidReason}. </strong>}
-              GST setting recorded at issue: {previewInvoice.gstRegisteredSnapshot === null ? 'not confirmed' : previewInvoice.gstRegisteredSnapshot ? 'registered' : 'not registered'}.
-              Document fingerprint {previewInvoice.fingerprint || 'draft, not issued'}.
+              {previewDoc.notes.map((note) => (
+                <div key={note}>{note}</div>
+              ))}
+              {previewDoc.snapshot === 'legacy' && (
+                <div>
+                  This document was issued before snapshots were captured. It is rebuilt from the current records and may
+                  differ from the copy the customer received.
+                </div>
+              )}
+              {previewDoc.status.status === 'voided' && (
+                <div>
+                  <strong>VOIDED — {previewDoc.status.voidReason ?? 'no reason recorded'}. </strong>
+                  This invoice is retained for the record and is not payable.
+                </div>
+              )}
+              Document fingerprint {previewDoc.fingerprint || 'draft, not issued'}.
             </div>
           </div>
         )}

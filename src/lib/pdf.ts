@@ -110,7 +110,7 @@ export async function renderPdf(doc: CommercialDocument): Promise<Uint8Array> {
     rightText(line, { xRight: MARGIN + CONTENT_WIDTH, y: rightY, size: 9, colour: muted });
     rightY -= 12;
   }
-  if (doc.status === 'voided') {
+  if (doc.status.status === 'voided') {
     rightText('VOID', { xRight: MARGIN + CONTENT_WIDTH, y: rightY, size: 11, font: bold });
     rightY -= 12;
   }
@@ -199,8 +199,8 @@ export async function renderPdf(doc: CommercialDocument): Promise<Uint8Array> {
     ],
     ['Total', formatCents(doc.totals.totalCents), true],
   ];
-  if (doc.balanceCents !== null) {
-    totalsRows.push(['Balance due', formatCents(doc.balanceCents), true]);
+  if (doc.balanceCents !== null && doc.balanceCents !== doc.totals.totalCents) {
+    totalsRows.push(['Outstanding balance (current)', formatCents(doc.balanceCents), true]);
   }
   for (const [label, value, strong] of totalsRows) {
     const font = strong ? bold : regular;
@@ -209,10 +209,21 @@ export async function renderPdf(doc: CommercialDocument): Promise<Uint8Array> {
     y -= strong ? 18 : 14;
   }
 
-  // Notes and provenance
+  // Notes and provenance: the frozen notes first, then anything that is true only now.
   y -= 8;
   const noteWidth = CONTENT_WIDTH;
-  for (const note of doc.notes) {
+  const currentNotes: string[] = [];
+  if (doc.snapshot === 'legacy') {
+    currentNotes.push(
+      'This document was issued before snapshots were captured. It is rebuilt from the current records and may differ from the copy the customer received.',
+    );
+  }
+  if (doc.status.status === 'voided') {
+    currentNotes.push(
+      `This invoice was voided${doc.status.voidReason ? `: ${doc.status.voidReason}` : ''}. It is retained for the record and is not payable.`,
+    );
+  }
+  for (const note of [...doc.notes, ...currentNotes]) {
     for (const wrapped of wrap(note, noteWidth, regular, 8)) {
       if (y < BOTTOM_LIMIT) newPage();
       text(wrapped, { x: MARGIN, y, size: 8, colour: muted });
@@ -231,7 +242,10 @@ export async function renderPdf(doc: CommercialDocument): Promise<Uint8Array> {
       color: rule,
     });
     current.drawText(`Document fingerprint ${stamp}`, { x: MARGIN, y: 52, size: 7, font: regular, color: muted });
-    current.drawText(`Stored fingerprint ${doc.fingerprint}`, { x: MARGIN, y: 43, size: 7, font: regular, color: muted });
+    current.drawText(
+      doc.snapshot === 'captured' ? `Stored fingerprint ${doc.fingerprint}` : 'Stored fingerprint: not captured at issue',
+      { x: MARGIN, y: 43, size: 7, font: regular, color: muted },
+    );
     const label = `Page ${index + 1} of ${pages.length}`;
     current.drawText(label, {
       x: MARGIN + CONTENT_WIDTH - regular.widthOfTextAtSize(label, 7),

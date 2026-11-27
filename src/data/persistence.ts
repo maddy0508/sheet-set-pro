@@ -6,6 +6,7 @@ import type {
   CatalogueProfile,
   Customer,
   DocLine,
+  DocumentSnapshot,
   DocumentTotals,
   Estimate,
   Evidence,
@@ -60,6 +61,8 @@ const num = (value: unknown): number => (value == null ? 0 : Number(value));
 const bool = (value: unknown): boolean => value === true;
 const boolOrNull = (value: unknown): boolean | null => (value == null ? null : value === true);
 const lines = (value: unknown): DocLine[] => (Array.isArray(value) ? (value as DocLine[]) : []);
+const snapshot = (value: unknown): DocumentSnapshot | null =>
+  value && typeof value === 'object' ? (value as DocumentSnapshot) : null;
 const totals = (value: unknown): DocumentTotals => {
   const record = (value ?? {}) as Partial<DocumentTotals>;
   return {
@@ -336,6 +339,7 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
       issued_at: entity.issuedAt,
       valid_until: entity.validUntil,
       fingerprint: entity.fingerprint,
+      snapshot: entity.snapshot,
       created_at: entity.createdAt,
     }),
     fromRow: (row) => ({
@@ -351,6 +355,7 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
       issuedAt: textOrNull(row.issued_at),
       validUntil: textOrNull(row.valid_until),
       fingerprint: text(row.fingerprint),
+      snapshot: snapshot(row.snapshot),
       createdAt: text(row.created_at),
     }),
   },
@@ -373,6 +378,7 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
       due_date: entity.dueDate,
       void_reason: entity.voidReason,
       fingerprint: entity.fingerprint,
+      snapshot: entity.snapshot,
       created_at: entity.createdAt,
     }),
     fromRow: (row) => ({
@@ -389,6 +395,7 @@ export const TABLE_PLANS: { [K in CollectionKey]: TablePlan<K> } = {
       dueDate: textOrNull(row.due_date),
       voidReason: textOrNull(row.void_reason),
       fingerprint: text(row.fingerprint),
+      snapshot: snapshot(row.snapshot),
       createdAt: text(row.created_at),
     }),
   },

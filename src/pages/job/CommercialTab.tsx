@@ -82,6 +82,9 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
   const latestEstimate = estimates[0];
   const latestQuote = quotes[0];
   const previewQuote = quotes.find((q) => q.id === previewQuoteId) ?? null;
+  const previewDoc = previewQuote
+    ? quoteDocument({ quote: previewQuote, job, customer, company, catalogueVerified })
+    : null;
 
   return (
     <div className="grid" style={{ gap: 16 }}>
@@ -321,31 +324,33 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
           </div>
         }
       >
-        {previewQuote && (
+        {previewDoc && (
           <div className="doc-preview">
             <div className="doc-head">
               <div>
-                <h2>{company.displayName}</h2>
+                <h2>{previewDoc.business.name}</h2>
                 <div className="small" style={{ marginTop: 4, color: '#4d5c69' }}>
-                  {company.address ?? 'Business address not confirmed'}
-                  <br />
-                  {company.abn ? `ABN ${company.abn}` : 'ABN not confirmed'}
-                  <br />
-                  {company.phone || company.email || ''}
+                  {previewDoc.business.detail.map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
                 </div>
               </div>
               <div className="doc-meta">
-                <strong>QUOTE {previewQuote.number}</strong>
+                <strong>{previewDoc.heading} {previewDoc.number}</strong>
                 <br />
-                Issued {previewQuote.issuedAt ? new Date(previewQuote.issuedAt).toLocaleDateString('en-AU') : '—'}
+                Issued {previewDoc.issuedAt ? new Date(previewDoc.issuedAt).toLocaleDateString('en-AU') : '—'}
                 <br />
-                Valid until {previewQuote.validUntil ?? '—'}
+                Valid until {previewDoc.validUntil ?? '—'}
               </div>
             </div>
 
             <div style={{ marginBottom: 12 }}>
-              <strong>{customer?.name ?? 'Customer'}</strong>
-              <div style={{ color: '#4d5c69' }}>{customer?.address || job.siteAddress || 'Address not recorded'}</div>
+              <strong>{previewDoc.customer.name}</strong>
+              {previewDoc.customer.detail.map((line) => (
+                <div key={line} style={{ color: '#4d5c69' }}>
+                  {line}
+                </div>
+              ))}
             </div>
 
             <table className="doc-table">
@@ -358,14 +363,14 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
                 </tr>
               </thead>
               <tbody>
-                {previewQuote.lines.map((line) => (
-                  <tr key={line.key}>
+                {previewDoc.lines.map((line, index) => (
+                  <tr key={`${line.description}-${index}`}>
                     <td>{line.description}</td>
                     <td className="num">
                       {(line.qtyMicro / 1_000_000).toLocaleString('en-AU', { maximumFractionDigits: 2 })} {line.unit}
                     </td>
                     <td className="num">{formatCents(line.unitPriceCents)}</td>
-                    <td className="num">{formatCents(Math.round((line.qtyMicro * line.unitPriceCents) / 1_000_000))}</td>
+                    <td className="num">{formatCents(line.amountCents)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -374,24 +379,30 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
             <div className="doc-totals">
               <div>
                 <span>Subtotal</span>
-                <span>{formatCents(previewQuote.totals.subtotalCents)}</span>
+                <span>{formatCents(previewDoc.totals.subtotalCents)}</span>
               </div>
               <div>
-                <span>GST {previewQuote.gstApplied ? `(${(previewQuote.gstRateBp / 100).toFixed(2)}%)` : '(not applied)'}</span>
-                <span>{formatCents(previewQuote.totals.gstCents)}</span>
+                <span>GST {previewDoc.totals.gstApplied ? `(${(previewDoc.totals.gstRateBp / 100).toFixed(2)}%)` : '(not applied)'}</span>
+                <span>{formatCents(previewDoc.totals.gstCents)}</span>
               </div>
               <div className="grand">
                 <span>Total</span>
-                <span>{formatCents(previewQuote.totals.totalCents)}</span>
+                <span>{formatCents(previewDoc.totals.totalCents)}</span>
               </div>
             </div>
 
             <div className="doc-stamp">
-              Prepared from measurements recorded for this site. Quantities are based on
-              {profile?.verificationState === 'VERIFIED' ? ' a verified product specification.' : ' a synthetic development specification and are not for manufacture.'}
-              {company.gstRegistered === null && ' GST registration is not confirmed; this document is not a tax invoice.'}
+              {previewDoc.notes.map((note) => (
+                <div key={note}>{note}</div>
+              ))}
+              {previewDoc.snapshot === 'legacy' && (
+                <div>
+                  This document was issued before snapshots were captured. It is rebuilt from the current records and may
+                  differ from the copy the customer received.
+                </div>
+              )}
               <br />
-              Document fingerprint {previewQuote.fingerprint}.
+              Document fingerprint {previewDoc.fingerprint || 'draft, not issued'}.
             </div>
           </div>
         )}

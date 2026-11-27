@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
-import type { AppState, Customer, Invoice, Job, Quote } from './types';
+import type { Allocation, AppState, Customer, Invoice, Job, Payment, Quote } from './types';
+import { captureInvoiceSnapshot } from '@/lib/document';
 import { claimWorkspace, fetchWorkspaceStatus, loadWorkspace, persistStateChange } from './remote';
 
 /**
@@ -61,6 +62,7 @@ const quote: Quote = {
   issuedAt: stamp,
   validUntil: '2026-12-26',
   fingerprint: 'fp-quote-1',
+  snapshot: null,
   createdAt: stamp,
 };
 
@@ -78,6 +80,7 @@ const invoice: Invoice = {
   dueDate: '2026-12-10T00:00:00.000Z',
   voidReason: null,
   fingerprint: 'fp-invoice-1',
+  snapshot: null,
   createdAt: stamp,
 };
 
@@ -206,6 +209,100 @@ run('persistence over the real API', () => {
     await persistStateChange(afterSupersede, accepted);
     const afterAccept = await loadWorkspace();
     expect(afterAccept.quotes[0].status).toBe('accepted');
+  });
+
+  it('enforces allocation limits and freezes issued documents in the database', async () => {
+    const state = await loadWorkspace();
+    const issuedInvoice = state.invoices.find((candidate) => candidate.id === invoice.id);
+    expect(issuedInvoice).toBeDefined();
+
+    const payment: Payment = {
+      id: '99999999-1111-4111-8111-000000000001',
+      jobId: job.id,
+      amountCents: 1000,
+      receivedAt: stamp,
+      method: 'bank_transfer',
+      reference: 'INTEG-1',
+      idempotencyKey: 'integ-1',
+      createdAt: stamp,
+    };
+    const withPayment: AppState = { ...state, payments: [payment] };
+    await persistStateChange(state, withPayment);
+
+    const allocation: Allocation = {
+      id: '88888888-1111-4111-8111-000000000001',
+      paymentId: payment.id,
+      invoiceId: invoice.id,
+      amountCents: 600,
+      createdAt: stamp,
+    };
+    const allocated: AppState = { ...withPayment, allocations: [allocation] };
+    await persistStateChange(withPayment, allocated);
+
+    const reloaded = await loadWorkspace();
+    expect(reloaded.allocations.map((row) => row.amountCents)).toEqual([600]);
+
+    // The browser would refuse this too; here the database has to.
+    const overAllocated: AppState = {
+      ...allocated,
+      allocations: [...allocated.allocations, { ...allocation, id: '88888888-1111-4111-8111-000000000002', amountCents: 600 }],
+    };
+    await expect(persistStateChange(allocated, overAllocated)).rejects.toThrow(/unallocated on payment/i);
+
+    // A draft invoice is not a payment target.
+    const draftInvoice: Invoice = {
+      ...invoice,
+      id: 'ffffffff-1111-4111-8111-000000000002',
+      number: 'INV-0002',
+      status: 'draft',
+      issuedAt: null,
+      dueDate: null,
+      snapshot: null,
+      fingerprint: '',
+    };
+    const withDraft: AppState = { ...allocated, invoices: [...allocated.invoices, draftInvoice] };
+    await persistStateChange(allocated, withDraft);
+
+    const toDraft: AppState = {
+      ...withDraft,
+      allocations: [...withDraft.allocations, { ...allocation, id: '88888888-1111-4111-8111-000000000003', invoiceId: draftInvoice.id }],
+    };
+    await expect(persistStateChange(withDraft, toDraft)).rejects.toThrow(/only an issued invoice/i);
+
+    // An issued document's snapshot is written once and then frozen.
+    const snapshotted: Invoice = {
+      ...draftInvoice,
+      id: 'ffffffff-1111-4111-8111-000000000003',
+      number: 'INV-0003',
+      status: 'issued',
+      issuedAt: stamp,
+      dueDate: '2026-12-10T00:00:00.000Z',
+    };
+    const snapshot = captureInvoiceSnapshot({
+      invoice: snapshotted,
+      job,
+      customer,
+      company: state.company,
+      catalogueVerified: false,
+    });
+    const issuedWithSnapshot: Invoice = { ...snapshotted, snapshot, fingerprint: snapshot.fingerprint };
+    const withIssued: AppState = { ...withDraft, invoices: [...withDraft.invoices, issuedWithSnapshot] };
+    await persistStateChange(withDraft, withIssued);
+
+    const stored = (await loadWorkspace()).invoices.find((candidate) => candidate.id === issuedWithSnapshot.id);
+    expect(stored?.snapshot?.fingerprint).toBe(snapshot.fingerprint);
+    expect(stored?.snapshot?.business).toEqual(snapshot.business);
+    expect(stored?.snapshot?.customer).toEqual(snapshot.customer);
+
+    const rewritten: AppState = {
+      ...withIssued,
+      invoices: withIssued.invoices.map((candidate) =>
+        candidate.id === issuedWithSnapshot.id
+          ? { ...candidate, snapshot: { ...snapshot, customer: { ...snapshot.customer, name: 'Rewritten Customer' } } }
+          : candidate,
+      ),
+    };
+    await expect(persistStateChange(withIssued, rewritten)).rejects.toThrow(/cannot change/i);
   });
 
   it('refuses anonymous access to the same tables', async () => {
