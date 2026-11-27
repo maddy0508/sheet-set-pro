@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useStore } from '@/data/store';
 import { formatCents } from '@/domain/units';
 import { Badge, Card, EmptyState, Field, Modal, Notice, SelectInput, Stat, TextInput, UnitInput } from '@/ui';
-import { IconAlert, IconCash, IconDoc } from '@/ui/icons';
+import { IconAlert, IconCash, IconCheck, IconDoc } from '@/ui/icons';
 import { invoiceDocument } from '@/lib/document';
 import { downloadPdf } from '@/lib/pdf';
 import type { JobTabProps } from './types';
@@ -26,6 +26,7 @@ export function BillingTab({ job, profile }: JobTabProps) {
   const [feedback, setFeedback] = useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState('');
+  const [pdfNotice, setPdfNotice] = useState('');
   const [allocate, setAllocate] = useState({ paymentId: '', invoiceId: '', amount: '' });
 
   const allocationSums = useMemo(() => {
@@ -42,6 +43,19 @@ export function BillingTab({ job, profile }: JobTabProps) {
   const invoicedTotal = issuedInvoices.reduce((sum, invoice) => sum + invoice.totals.totalCents, 0);
   const paidTotal = issuedInvoices.reduce((sum, invoice) => sum + (allocationSums.byInvoice.get(invoice.id) ?? 0), 0);
   const outstandingTotal = invoicedTotal - paidTotal;
+  const openPayments = payments.filter((payment) => payment.amountCents - (allocationSums.byPayment.get(payment.id) ?? 0) > 0);
+  const openInvoices = issuedInvoices.filter((invoice) => invoice.totals.totalCents - (allocationSums.byInvoice.get(invoice.id) ?? 0) > 0);
+  // With a single candidate the choice is unambiguous, so pre-select it instead of asking twice.
+  const paymentId = allocate.paymentId || (openPayments.length === 1 ? openPayments[0].id : '');
+  const invoiceId = allocate.invoiceId || (openInvoices.length === 1 ? openInvoices[0].id : '');
+  const suggestedCents = (() => {
+    const payment = openPayments.find((candidate) => candidate.id === paymentId);
+    const invoice = openInvoices.find((candidate) => candidate.id === invoiceId);
+    if (!payment || !invoice) return 0;
+    const paymentLeft = payment.amountCents - (allocationSums.byPayment.get(payment.id) ?? 0);
+    const invoiceLeft = invoice.totals.totalCents - (allocationSums.byInvoice.get(invoice.id) ?? 0);
+    return Math.max(0, Math.min(paymentLeft, invoiceLeft));
+  })();
   const previewInvoice = invoices.find((i) => i.id === previewId) ?? null;
   const acceptedQuote = quotes.find((q) => q.status === 'accepted') ?? null;
 
@@ -52,7 +66,8 @@ export function BillingTab({ job, profile }: JobTabProps) {
     const balanceCents =
       invoice.status === 'voided' ? 0 : invoice.status === 'issued' ? invoice.totals.totalCents - allocated : invoice.totals.totalCents;
     setPdfError('');
-    downloadPdf(
+    setPdfNotice('');
+    void downloadPdf(
       invoiceDocument({
         invoice,
         job,
@@ -61,9 +76,11 @@ export function BillingTab({ job, profile }: JobTabProps) {
         catalogueVerified: profile?.verificationState === 'VERIFIED',
         balanceCents,
       }),
-    ).catch((error: unknown) => {
-      setPdfError(error instanceof Error ? error.message : 'The PDF could not be produced.');
-    });
+    )
+      .then(() => setPdfNotice(`Invoice ${invoice.number} saved as a PDF.`))
+      .catch((error: unknown) => {
+        setPdfError(error instanceof Error ? error.message : 'The PDF could not be produced.');
+      });
   };
 
   const recordPayment = () => {
@@ -88,18 +105,23 @@ export function BillingTab({ job, profile }: JobTabProps) {
   };
 
   const doAllocate = () => {
-    const amount = Math.round(Number(allocate.amount) * 100);
-    if (!allocate.paymentId || !allocate.invoiceId) {
+    const amount = Math.round(Number(allocate.amount.trim() === '' ? suggestedCents / 100 : allocate.amount) * 100);
+    if (!paymentId || !invoiceId) {
       setFeedback('Choose a payment and an invoice.');
       return;
     }
-    const result = actions.allocatePayment(allocate.paymentId, allocate.invoiceId, amount);
+    const result = actions.allocatePayment(paymentId, invoiceId, amount);
     setFeedback(result.ok ? '' : result.message ?? 'Allocation failed.');
     if (result.ok) setAllocate({ paymentId: '', invoiceId: '', amount: '' });
   };
 
   return (
     <div className="grid" style={{ gap: 16 }}>
+      {pdfNotice && (
+        <Notice tone="ok" icon={<IconCheck />}>
+          {pdfNotice} Check your downloads folder.
+        </Notice>
+      )}
       {pdfError && (
         <Notice tone="danger" icon={<IconAlert />}>
           The document could not be produced: {pdfError}
@@ -265,9 +287,9 @@ export function BillingTab({ job, profile }: JobTabProps) {
         <Card title="Allocate a payment" subtitle="Allocations can never exceed the payment or the invoice">
           <div className="grid" style={{ gap: 12 }}>
             <Field label="Payment">
-              <SelectInput value={allocate.paymentId} onChange={(e) => setAllocate({ ...allocate, paymentId: e.target.value })}>
+              <SelectInput value={paymentId} onChange={(e) => setAllocate({ ...allocate, paymentId: e.target.value })}>
                 <option value="">Select payment…</option>
-                {payments.map((payment) => {
+                {openPayments.map((payment) => {
                   const remaining = payment.amountCents - (allocationSums.byPayment.get(payment.id) ?? 0);
                   return (
                     <option key={payment.id} value={payment.id}>
@@ -278,9 +300,9 @@ export function BillingTab({ job, profile }: JobTabProps) {
               </SelectInput>
             </Field>
             <Field label="Invoice">
-              <SelectInput value={allocate.invoiceId} onChange={(e) => setAllocate({ ...allocate, invoiceId: e.target.value })}>
+              <SelectInput value={invoiceId} onChange={(e) => setAllocate({ ...allocate, invoiceId: e.target.value })}>
                 <option value="">Select invoice…</option>
-                {issuedInvoices.map((invoice) => (
+                {openInvoices.map((invoice) => (
                   <option key={invoice.id} value={invoice.id}>
                     {invoice.number} · {formatCents(invoice.totals.totalCents - (allocationSums.byInvoice.get(invoice.id) ?? 0))} outstanding
                   </option>
@@ -288,9 +310,13 @@ export function BillingTab({ job, profile }: JobTabProps) {
               </SelectInput>
             </Field>
             <Field label="Amount">
-              <UnitInput unit="$" value={allocate.amount} onChange={(e) => setAllocate({ ...allocate, amount: e.target.value })} />
+              <UnitInput
+                unit="$"
+                value={allocate.amount === '' && suggestedCents > 0 ? (suggestedCents / 100).toFixed(2) : allocate.amount}
+                onChange={(e) => setAllocate({ ...allocate, amount: e.target.value })}
+              />
             </Field>
-            <button type="button" className="btn btn-secondary" onClick={doAllocate} disabled={issuedInvoices.length === 0 || payments.length === 0}>
+            <button type="button" className="btn btn-secondary" onClick={doAllocate} disabled={openInvoices.length === 0 || openPayments.length === 0}>
               Allocate
             </button>
             {feedback && <div className="notice notice-warn"><IconAlert /><div>{feedback}</div></div>}

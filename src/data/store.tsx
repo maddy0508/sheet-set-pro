@@ -24,6 +24,7 @@ import { loadWorkspace, persistStateChange } from './remote';
 import { computeTotals } from '@/domain/pricing';
 import { fingerprint } from '@/domain/units';
 import type { EvidenceKind, FlashingKind, MeasurementGrade, SourceType } from '@/domain/types';
+import { normaliseTimestamp } from '@/lib/time';
 
 const STORAGE_KEY = 'sheet-set-pro.state.v1';
 
@@ -570,7 +571,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           id: uid(),
           jobId,
           amountCents: input.amountCents,
-          receivedAt: input.receivedAt,
+          receivedAt: normaliseTimestamp(input.receivedAt, nowIso()),
           method: input.method,
           reference: input.reference,
           idempotencyKey,
@@ -632,7 +633,27 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         commit((prev) => {
           const customerId = uid();
           const jobId = uid();
+          const evidenceId = uid();
           const stamp = nowIso();
+          const planeOne = { id: uid(), jobId, ref: 'P1', xMm: 0, yMm: 0, widthMm: 6000, lengthMm: 3600, pitchMicrodeg: 22_500_000 };
+          const planeTwo = { id: uid(), jobId, ref: 'P2', xMm: 6000, yMm: 0, widthMm: 6000, lengthMm: 3600, pitchMicrodeg: 22_500_000 };
+          const measurements = [
+            { plane: planeOne, kind: 'plane_width' as const, label: 'P1 eave width', valueMm: 6000 },
+            { plane: planeOne, kind: 'plane_length' as const, label: 'P1 rafter length', valueMm: 3600 },
+            { plane: planeTwo, kind: 'plane_width' as const, label: 'P2 eave width', valueMm: 6000 },
+            { plane: planeTwo, kind: 'plane_length' as const, label: 'P2 rafter length', valueMm: 3600 },
+          ].map(({ kind, label, valueMm }) => ({
+            id: uid(),
+            jobId,
+            evidenceId,
+            kind,
+            label,
+            valueMm,
+            toleranceMm: 20,
+            grade: 'ESTIMATE_GRADE' as const,
+            isActive: true,
+            createdAt: stamp,
+          }));
           return {
             ...prev,
             customers: [
@@ -668,10 +689,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
               },
               ...prev.jobs,
             ],
-            planes: [
-              ...prev.planes,
-              { id: uid(), jobId, ref: 'P1', xMm: 0, yMm: 0, widthMm: 6000, lengthMm: 3600, pitchMicrodeg: 22_500_000 },
-              { id: uid(), jobId, ref: 'P2', xMm: 6000, yMm: 0, widthMm: 6000, lengthMm: 3600, pitchMicrodeg: 22_500_000 },
+            planes: [...prev.planes, planeOne, planeTwo],
+            evidence: [
+              {
+                id: evidenceId,
+                jobId,
+                sourceKind: 'manual',
+                note: 'SYNTHETIC tape measurement entered for the demonstration job.',
+                accuracyClaimMm: 50,
+                accuracyBasis: 'operator_estimate',
+                isVerified: false,
+                createdAt: stamp,
+              },
+              ...prev.evidence,
+            ],
+            measurements: [
+              ...measurements,
+              ...prev.measurements,
             ],
             flashings: [
               ...prev.flashings,

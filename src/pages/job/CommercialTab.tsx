@@ -19,6 +19,7 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
   const [marginBp, setMarginBp] = useState(String(company.defaultMarginBp));
   const [showPreview, setShowPreview] = useState(false);
   const [pdfError, setPdfError] = useState('');
+  const [pdfNotice, setPdfNotice] = useState('');
   const [previewQuoteId, setPreviewQuoteId] = useState<string | null>(null);
   const [validUntil, setValidUntil] = useState(() => {
     const date = new Date();
@@ -69,9 +70,12 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
     const quote = quotes.find((candidate) => candidate.id === quoteId);
     if (!quote) return;
     setPdfError('');
-    downloadPdf(quoteDocument({ quote, job, customer, company, catalogueVerified })).catch((error: unknown) => {
-      setPdfError(error instanceof Error ? error.message : 'The PDF could not be produced.');
-    });
+    setPdfNotice('');
+    void downloadPdf(quoteDocument({ quote, job, customer, company, catalogueVerified }))
+      .then(() => setPdfNotice(`Quote ${quote.number} saved as a PDF.`))
+      .catch((error: unknown) => {
+        setPdfError(error instanceof Error ? error.message : 'The PDF could not be produced.');
+      });
   };
 
   const latestEstimate = estimates[0];
@@ -205,6 +209,11 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
       {pdfError && (
         <Notice tone="danger" icon={<IconAlert />}>
           The document could not be produced: {pdfError}
+        </Notice>
+      )}
+      {pdfNotice && (
+        <Notice tone="ok" icon={<IconCheck />}>
+          {pdfNotice} Check your downloads folder.
         </Notice>
       )}
 
