@@ -10,9 +10,15 @@ recovery targets in SSP-01 (RPO 24 hours, RTO 8 hours — planning targets, not 
 |---|---|---|
 | Local development and staging database (`sheet_set_pro_api`) | `scripts/backup-db.sh` | CONFIRMED — a backup and a full restore drill pass |
 | Restore correctness | `scripts/restore-drill.sh` | CONFIRMED — row-level comparison, invariants and API reads |
-| Hosted Supabase project | Not yet created | REQUIRES USER ACTION |
-| Point-in-time recovery (RPO 24 h) | Provider plan feature | REQUIRES USER ACTION — depends on the project plan |
+| Hosted Supabase project | Nothing in this repository | NOT CONFIGURED — the project exists, the application is not connected to it, and no hosted backup has been taken or restored |
+| Hosted backup retention and point-in-time recovery | Provider plan feature | UNABLE TO VERIFY — the plan's retention and PITR window have not been read from the project |
 | Off-site copy of backups | Not configured | REQUIRES USER ACTION |
+| Scheduled backup and scheduled recovery test | Not configured | REQUIRES USER ACTION |
+
+The scripts here operate on a PostgreSQL instance you point them at. They have never been run
+against the hosted Supabase project, and a local archive is not a hosted backup: it does not cover
+the project's storage buckets, its auth records, its extensions or its provider-side recovery
+window. Nothing in this repository protects the hosted project today.
 
 The local database is disposable by design: it is rebuilt from `supabase/migrations` plus
 demonstration data. Losing it costs time, not business records. Losing a hosted project would cost
@@ -82,6 +88,11 @@ PASS
 
 - A drill is a logical restore, not a point-in-time restore. It proves the archive is faithful; it
   does not prove the provider's recovery window.
+- The local backup scripts do not constitute hosted Supabase backups. Supabase storage, auth and
+  the provider's own retention are outside their scope, and no archive from this repository has
+  been taken from or restored into the hosted project.
+- The RPO of 24 hours and RTO of 8 hours are planning targets from SSP-01. Nothing here meets
+  them: no schedule runs, no hosted backup exists, and no timed recovery has been measured.
 - The drill reads the live database to build the comparison. On a disaster-recovery restore there
   is no live database to compare against, so the comparison step is skipped and only steps 1, 2, 4
   and 5 apply.
@@ -90,7 +101,12 @@ PASS
 
 ## Before the first real job is entered
 
-1. Create the hosted Supabase project and record its plan's backup retention and PITR window.
-2. Run the drill against a copy of the hosted database, not only the local one.
-3. Schedule `scripts/backup-db.sh` (or rely on provider backups) and store an off-site copy.
+1. Connect the application to the existing hosted Supabase project, and record from that project
+   its plan, region, backup retention and PITR window. None of these is known from the repository.
+2. Take a backup of the hosted database and run the drill against it — not only against the local
+   database.
+3. Decide who owns backup, then schedule it: either the provider's own backups with a documented
+   retention, or `scripts/backup-db.sh` on a schedule, with an off-site copy that lives somewhere
+   other than the machine holding the database.
 4. Record the restore time measured during a drill and compare it with the 8-hour RTO target.
+5. Until 1–4 are done, treat the hosted project as unbacked-up and do not enter a real job.
