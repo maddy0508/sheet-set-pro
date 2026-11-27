@@ -232,7 +232,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }
         const message = error instanceof Error ? error.message : String(error);
         setSync((current) => ({ ...current, status: 'error', error: message }));
-        // A write can fail after some tables were written; the database is the authority.
+        // The save is one transaction, so nothing was written; re-read anyway so the
+        // screen shows what the database holds rather than what we hoped it held.
         loadWorkspace()
           .then((loaded) => {
             stateRef.current = loaded;

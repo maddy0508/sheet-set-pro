@@ -23,6 +23,29 @@ stale tab or a hand-written request cannot break them.
 | A synthetic catalogue entry cannot claim verification | Check constraint `catalogue_unverified_source` |
 | Money is integer cents, dimensions integer millimetres | Column types, no floating point on the path |
 | Every child row belongs to the same business as its job | Composite foreign keys `(job_id, business_id)` |
+| A save lands completely or not at all | `save_workspace(...)` applies business settings, upserts and deletes in one transaction, as the caller |
+
+## How a save is written
+
+A save is one operator action, so it is one database transaction. The client works out what
+changed (see `src/data/persistence.ts`) and hands the whole change set to `save_workspace`, which
+applies it in this order inside a single transaction:
+
+1. Business settings, only the columns an operator can edit.
+2. Upserts, parents before children (`customers` → `catalogue_profiles` → `jobs` → … →
+   `activity_events`), so every foreign key is satisfied when it is checked.
+3. Deletes, children before parents.
+
+The function is `security invoker`: the caller's own role runs every statement, so row level
+security, the history triggers, the allocation guard and every constraint apply exactly as they do
+to a direct write. There is no service-role key, no `security definer`, and nothing is retried
+silently. A refusal anywhere — a frozen issued document, an over-allocation, a broken foreign key,
+a check constraint — aborts the transaction, and the earlier tables are left untouched.
+
+Two further guards live in the function itself: a record whose `business_id` does not match the
+save is refused, and a column the target table does not have is refused rather than dropped. A
+delete that matches no rows is reported instead of ignored, because it means the screen is out of
+date.
 
 ## Applying the migrations
 
@@ -35,6 +58,10 @@ supabase/migrations/20261126090000_schema.sql
 supabase/migrations/20261126091000_protection.sql
 supabase/migrations/20261126092000_rls.sql
 supabase/migrations/20261126093000_seed_workspace.sql
+supabase/migrations/20261126100000_labour_cost.sql
+supabase/migrations/20261127120000_allocation_integrity.sql
+supabase/migrations/20261127121000_document_snapshots.sql
+supabase/migrations/20261127130000_atomic_save.sql
 ```
 
 **Supabase CLI**, if it is available:
@@ -78,7 +105,7 @@ report.
 Both suites run against real PostgreSQL, not mocks.
 
 ```bash
-npm run test:db    # 48 assertions: policies, isolation, immutability, constraints
+npm run test:db    # policies, isolation, immutability, constraints, commercial integrity, atomic saves
 npm run test:api   # the browser's own repository module against PostgREST: claim, write, reload, reject
 ```
 
@@ -95,7 +122,11 @@ What the API suite proves, in order:
 4. A fresh load returns exactly what was written — this is the browser-refresh path.
 5. A measurement can be superseded but not rewritten; an issued quote cannot be altered but can be
    accepted.
-6. An anonymous key can read and write nothing.
+6. A save that is refused halfway leaves every table exactly as it was: an invalid measurement
+   rolls back the customer, job and evidence written before it; a business settings change in the
+   same save is undone too; and a delete that fails (a customer who still has jobs) undoes the
+   inserts and updates that preceded it. Reloading returns the pre-save state byte for byte.
+7. An anonymous key can read and write nothing.
 
 ## Layout
 

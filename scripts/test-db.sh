@@ -39,6 +39,9 @@ run_sql "${DB_NAME}" "${ROOT}/supabase/tests/rls_test.sql"
 echo "Running commercial integrity suite…"
 run_sql "${DB_NAME}" "${ROOT}/supabase/tests/commercial_integrity_test.sql"
 
+echo "Running atomic save suite…"
+run_sql "${DB_NAME}" "${ROOT}/supabase/tests/atomic_save_test.sql"
+
 echo "Running allocation concurrency test…"
 SSP_TEST_DB="${DB_NAME}" bash "${ROOT}/supabase/tests/allocation_concurrency_test.sh"
 

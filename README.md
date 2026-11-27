@@ -60,9 +60,11 @@ row level security limits reads and writes to members of that business. Anonymou
 refused. See `supabase/README.md` for the schema, the migrations, first-run setup and the tests.
 
 Writes go through the same typed actions as before. The store applies a change optimistically, then
-persists the difference between the previous and the new state; a rejected write restores the
-previous state and reports the failure, and the database is re-read so the screen always matches
-what was actually stored.
+persists the difference between the previous and the new state as **one transaction**: the whole
+change set — business settings, upserts and deletes — travels in a single call to the
+`save_workspace` database function, so a refusal anywhere leaves the database exactly as it was. A
+rejected write restores the previous state and reports the failure, and the database is re-read so
+the screen always matches what was actually stored.
 
 ## Storage (local mode)
 
