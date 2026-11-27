@@ -20,6 +20,7 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
   const [showPreview, setShowPreview] = useState(false);
   const [pdfError, setPdfError] = useState('');
   const [pdfNotice, setPdfNotice] = useState('');
+  const [issueError, setIssueError] = useState('');
   const [previewQuoteId, setPreviewQuoteId] = useState<string | null>(null);
   const [validUntil, setValidUntil] = useState(() => {
     const date = new Date();
@@ -175,11 +176,19 @@ export function CommercialTab({ job, computation, profile }: JobTabProps) {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={() => actions.issueQuote(job.id, latestEstimate.id, validUntil)}
+                  onClick={() => {
+                    const result = actions.issueQuote(job.id, latestEstimate.id, validUntil);
+                    setIssueError(result.ok ? '' : (result.message ?? 'The quote was not issued.'));
+                  }}
                 >
                   <IconDoc size={14} />
                   Issue quote
                 </button>
+                {issueError && (
+                  <Notice tone="danger" icon={<IconAlert />}>
+                    {issueError}
+                  </Notice>
+                )}
               </div>
             ) : (
               <div className="small muted">Save an estimate revision first.</div>

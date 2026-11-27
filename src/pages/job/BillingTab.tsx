@@ -127,6 +127,11 @@ export function BillingTab({ job, profile }: JobTabProps) {
           The document could not be produced: {pdfError}
         </Notice>
       )}
+      {feedback && (
+        <Notice tone="warn" icon={<IconAlert />}>
+          {feedback}
+        </Notice>
+      )}
 
       <div className="grid grid-4">
         <Stat label="Invoiced" value={formatCents(invoicedTotal)} hint={`${issuedInvoices.length} issued`} />
@@ -201,7 +206,14 @@ export function BillingTab({ job, profile }: JobTabProps) {
                       </td>
                       <td className="actions">
                         {invoice.status === 'draft' && (
-                          <button type="button" className="btn btn-primary btn-sm" onClick={() => actions.issueInvoice(invoice.id)}>
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => {
+                              const result = actions.issueInvoice(invoice.id);
+                              setFeedback(result.ok ? '' : (result.message ?? 'The invoice was not issued.'));
+                            }}
+                          >
                             Issue
                           </button>
                         )}
@@ -225,7 +237,9 @@ export function BillingTab({ job, profile }: JobTabProps) {
                             className="btn btn-ghost btn-sm"
                             onClick={() => {
                               const reason = prompt('Reason for voiding this invoice?');
-                              if (reason) actions.voidInvoice(invoice.id, reason);
+                              if (reason === null) return;
+                              const result = actions.voidInvoice(invoice.id, reason);
+                              setFeedback(result.ok ? '' : (result.message ?? 'The invoice was not voided.'));
                             }}
                           >
                             Void
@@ -319,7 +333,6 @@ export function BillingTab({ job, profile }: JobTabProps) {
             <button type="button" className="btn btn-secondary" onClick={doAllocate} disabled={openInvoices.length === 0 || openPayments.length === 0}>
               Allocate
             </button>
-            {feedback && <div className="notice notice-warn"><IconAlert /><div>{feedback}</div></div>}
           </div>
         </Card>
       </div>

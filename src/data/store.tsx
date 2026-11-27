@@ -22,6 +22,7 @@ import { createInitialState } from './seed';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { loadWorkspace, persistStateChange } from './remote';
 import { computeTotals } from '@/domain/pricing';
+import { checkAllocation, checkInvoiceVoid, checkPaymentAmount, decideGst } from '@/domain/commercial';
 import { fingerprint } from '@/domain/units';
 import type { EvidenceKind, FlashingKind, MeasurementGrade, SourceType } from '@/domain/types';
 import { normaliseTimestamp } from '@/lib/time';
@@ -91,11 +92,11 @@ export type Actions = {
   deactivateMeasurement: (id: string) => void;
   saveProfile: (profile: CatalogueProfile) => void;
   saveEstimate: (jobId: string, lines: DocLine[], marginBp: number, labourCents: number) => Estimate;
-  issueQuote: (jobId: string, estimateId: string, validUntil: string | null) => void;
+  issueQuote: (jobId: string, estimateId: string, validUntil: string | null) => { ok: boolean; message?: string };
   setQuoteStatus: (quoteId: string, status: Quote['status']) => void;
   createInvoice: (jobId: string, quoteId: string | null) => void;
-  issueInvoice: (invoiceId: string) => void;
-  voidInvoice: (invoiceId: string, reason: string) => void;
+  issueInvoice: (invoiceId: string) => { ok: boolean; message?: string };
+  voidInvoice: (invoiceId: string, reason: string) => { ok: boolean; message?: string };
   addPayment: (
     jobId: string,
     input: { amountCents: number; method: Payment['method']; reference: string; receivedAt: string },
@@ -452,11 +453,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return estimate;
       },
 
-      issueQuote: (jobId, estimateId, validUntil) =>
+      issueQuote: (jobId, estimateId, validUntil) => {
+        const current = stateRef.current;
+        if (!current.estimates.some((e) => e.id === estimateId)) return { ok: false, message: 'Estimate not found.' };
+        const gst = decideGst(current.company);
+        if (!gst.ok) return { ok: false, message: gst.message };
+        const gstApplied = gst.applied;
         commit((prev) => {
           const estimate = prev.estimates.find((e) => e.id === estimateId);
           if (!estimate) return prev;
-          const gstApplied = prev.company.gstRegistered === true;
           const totals = computeTotals(
             estimate.lines.map((line) => ({ qtyMicro: line.qtyMicro, unitPriceCents: line.unitPriceCents })),
             { gstRateBp: prev.company.gstRateBp, gstApplied },
@@ -486,7 +491,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             jobs: prev.jobs.map((j) => (j.id === jobId ? { ...j, status: 'quoted', updatedAt: nowIso() } : j)),
             activity: withActivity(prev, 'quote.issued', 'quote', quote.id, `${quote.number} issued.`),
           };
-        }),
+        });
+        return { ok: true };
+      },
 
       setQuoteStatus: (quoteId, status) =>
         commit((prev) => {
@@ -528,11 +535,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           };
         }),
 
-      issueInvoice: (invoiceId) =>
+      issueInvoice: (invoiceId) => {
+        const current = stateRef.current;
+        const candidate = current.invoices.find((i) => i.id === invoiceId);
+        if (!candidate) return { ok: false, message: 'Invoice not found.' };
+        if (candidate.status !== 'draft') return { ok: false, message: `${candidate.number} has already been ${candidate.status}.` };
+        const gst = decideGst(current.company);
+        if (!gst.ok) return { ok: false, message: gst.message };
+        const gstApplied = gst.applied;
         commit((prev) => {
           const invoice = prev.invoices.find((i) => i.id === invoiceId);
           if (!invoice || invoice.status !== 'draft') return prev;
-          const gstApplied = prev.company.gstRegistered === true;
           const totals = computeTotals(
             invoice.lines.map((line) => ({ qtyMicro: line.qtyMicro, unitPriceCents: line.unitPriceCents })),
             { gstRateBp: prev.company.gstRateBp, gstApplied },
@@ -553,20 +566,32 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             jobs: prev.jobs.map((j) => (j.id === invoice.jobId ? { ...j, status: 'invoiced', updatedAt: nowIso() } : j)),
             activity: withActivity(prev, 'invoice.issued', 'invoice', invoiceId, `${invoice.number} issued and locked.`),
           };
-        }),
+        });
+        return { ok: true };
+      },
 
-      voidInvoice: (invoiceId, reason) =>
+      voidInvoice: (invoiceId, reason) => {
+        const current = stateRef.current;
+        const invoice = current.invoices.find((i) => i.id === invoiceId);
+        if (!invoice) return { ok: false, message: 'Invoice not found.' };
+        if (reason.trim() === '') return { ok: false, message: 'A reason is required to void an invoice.' };
+        const check = checkInvoiceVoid(invoice, current.allocations);
+        if (!check.ok) return check;
         commit((prev) => ({
           ...prev,
           invoices: prev.invoices.map((i) =>
             i.id === invoiceId && i.status === 'issued' ? { ...i, status: 'voided', voidReason: reason } : i,
           ),
           activity: withActivity(prev, 'invoice.voided', 'invoice', invoiceId, reason),
-        })),
+        }));
+        return { ok: true };
+      },
 
       addPayment: (jobId, input, idempotencyKey) => {
         const existing = stateRef.current.payments.find((p) => p.idempotencyKey === idempotencyKey);
         if (existing) return { ok: false, message: 'This payment was already recorded.' };
+        const amountCheck = checkPaymentAmount(input.amountCents);
+        if (!amountCheck.ok) return amountCheck;
         const payment: Payment = {
           id: uid(),
           jobId,
@@ -590,11 +615,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         const payment = current.payments.find((p) => p.id === paymentId);
         const invoice = current.invoices.find((i) => i.id === invoiceId);
         if (!payment || !invoice) return { ok: false, message: 'Payment or invoice not found.' };
-        const allocatedToPayment = current.allocations.filter((a) => a.paymentId === paymentId).reduce((s, a) => s + a.amountCents, 0);
-        const allocatedToInvoice = current.allocations.filter((a) => a.invoiceId === invoiceId).reduce((s, a) => s + a.amountCents, 0);
-        if (amountCents <= 0) return { ok: false, message: 'Allocation must be greater than zero.' };
-        if (allocatedToPayment + amountCents > payment.amountCents) return { ok: false, message: 'Allocation exceeds the payment amount.' };
-        if (allocatedToInvoice + amountCents > invoice.totals.totalCents) return { ok: false, message: 'Allocation exceeds the invoice total.' };
+        const check = checkAllocation({ payment, invoice, allocations: current.allocations, amountCents });
+        if (!check.ok) return check;
         const allocation: Allocation = { id: uid(), paymentId, invoiceId, amountCents, createdAt: nowIso() };
         commit((prev) => {
           const fullyPaid =
