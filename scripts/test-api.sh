@@ -6,9 +6,13 @@
 # workspace, write records, read them back, and try to break the history rules.
 #
 #   bash scripts/test-api.sh
+#   SSP_API_DB=other_db bash scripts/test-api.sh
+#
+# It recreates its database, so it defaults to a scratch name rather than the
+# development database that scripts/dev-api.sh keeps serving.
 set -euo pipefail
 
-DB_NAME="${SSP_API_DB:-sheet_set_pro_api}"
+DB_NAME="${SSP_API_DB:-ssp_api_test}"
 PORT="${SSP_API_PORT:-3111}"
 UPSTREAM_PORT="$((PORT + 1))"
 JWT_SECRET="${SSP_API_JWT_SECRET:-local-development-secret-at-least-32-chars}"

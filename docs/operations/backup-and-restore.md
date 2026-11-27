@@ -28,7 +28,12 @@ SSP_BACKUP_DIR=/mnt/backups bash scripts/backup-db.sh
 ```
 
 - Writes a custom-format archive named `<database>-<UTC timestamp>.dump` to
-  `~/.sheet-set-pro/backups` (outside the repository, mode 700, files 600).
+  `.backups/` in the repository root (git-ignored, mode 700, files 600).
+- The default is inside the workspace on purpose: the development container is recycled
+  mid-session, which wipes `$HOME` and `/tmp` along with the PostgreSQL cluster. A backup kept in
+  either place disappears with the thing it was meant to protect. The workspace survives, so the
+  archive does. Neither location is retention: point `SSP_BACKUP_DIR` at storage outside the
+  container before this protects anything real.
 - Writes a `.sha256` sidecar next to it.
 - Reads the archive back with `pg_restore --list` before reporting success, so a truncated or
   unreadable dump fails immediately.

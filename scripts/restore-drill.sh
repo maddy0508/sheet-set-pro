@@ -11,7 +11,8 @@ set -euo pipefail
 
 LIVE_DB="${SSP_API_DB:-sheet_set_pro_api}"
 DRILL_DB="${SSP_DRILL_DB:-ssp_restore_drill}"
-BACKUP_DIR="${SSP_BACKUP_DIR:-$HOME/.sheet-set-pro/backups}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BACKUP_DIR="${SSP_BACKUP_DIR:-$REPO_ROOT/.backups}"
 PORT="${SSP_DRILL_PORT:-3211}"
 UPSTREAM_PORT="$((PORT + 1))"
 JWT_SECRET="${SSP_API_JWT_SECRET:-local-development-secret-at-least-32-chars}"

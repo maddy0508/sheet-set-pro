@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Logical backup of the workspace database, written outside the source tree and
-# verified by reading the archive back. Credentials never appear in the output.
+# Logical backup of the workspace database, written to a git-ignored directory
+# and verified by reading the archive back. Credentials never appear in output.
 #
 #   bash scripts/backup-db.sh                 # dump the local development database
 #   SSP_API_DB=prod_db bash scripts/backup-db.sh
@@ -8,13 +8,18 @@
 # Production backups are the provider's responsibility; this covers the local
 # development and staging database and proves the archive can be restored.
 #
+# The default destination is .backups/ inside the repository because the
+# development container is recycled: $HOME and /tmp are wiped with it, the
+# workspace is not. Point SSP_BACKUP_DIR at off-host storage for real retention.
+#
 # Row level security depends on table grants to the anon and authenticated roles,
 # so the archive keeps privileges. A restore target must already have those roles;
 # Supabase provides them.
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB_NAME="${SSP_API_DB:-sheet_set_pro_api}"
-BACKUP_DIR="${SSP_BACKUP_DIR:-$HOME/.sheet-set-pro/backups}"
+BACKUP_DIR="${SSP_BACKUP_DIR:-$REPO_ROOT/.backups}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 FILE="${BACKUP_DIR}/${DB_NAME}-${STAMP}.dump"
 
