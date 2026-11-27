@@ -25,6 +25,10 @@ export type PlaneGeometry = {
   /** Length up the slope, measured along the roof surface. */
   lengthMm: number;
   pitchMicrodeg: number;
+  /** Direction water runs off; the eave is the low edge. Defaults to south. */
+  fall?: 'north' | 'south' | 'east' | 'west';
+  /** Ridge length across the slope. Shorter than the eave width makes a hip end. */
+  ridgeWidthMm?: number | null;
 };
 
 export type BomCategory = 'sheet' | 'flashing' | 'fastener' | 'accessory' | 'consumable';

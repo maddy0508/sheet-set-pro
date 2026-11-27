@@ -1,4 +1,5 @@
-import { NumericError, assertLengthMm, ceilDiv } from './units';
+import { NumericError, assertLengthMm, ceilDiv, mulDivRound } from './units';
+import { planRunMm } from './roof3d';
 import type { PlaneGeometry } from './types';
 
 export type PlaneMetrics = {
@@ -9,9 +10,20 @@ export type PlaneMetrics = {
   slopeFactorNote: string;
 };
 
-/** Area of a plane measured on the roof surface: width x along-slope length. */
+/** Width at the ridge: the eave width unless the plane is a hip end. */
+export function ridgeWidthMm(plane: PlaneGeometry): number {
+  if (plane.ridgeWidthMm === null || plane.ridgeWidthMm === undefined) return plane.widthMm;
+  return Math.max(0, Math.min(plane.widthMm, plane.ridgeWidthMm));
+}
+
+/**
+ * Area of a plane measured on the roof surface.
+ *
+ * A hip end narrows towards the ridge, so its surface is a trapezoid: the mean of the eave
+ * and ridge widths over the slope length. A plain rectangle reduces to width x length.
+ */
 export function planeAreaMm2(plane: PlaneGeometry): number {
-  return plane.widthMm * plane.lengthMm;
+  return mulDivRound(plane.widthMm + ridgeWidthMm(plane), plane.lengthMm, 2);
 }
 
 export function planeMetrics(plane: PlaneGeometry): PlaneMetrics {
@@ -26,13 +38,17 @@ export function planeMetrics(plane: PlaneGeometry): PlaneMetrics {
 
 export type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
 
+/**
+ * The plane's shadow on plan. A pitched plane covers less ground than its slope length, and
+ * the fall direction decides which way it lies, so overlap checks and the plan drawing use
+ * the same footprint the 3D model does.
+ */
 export function planeBounds(plane: PlaneGeometry): Bounds {
-  return {
-    minX: plane.xMm,
-    minY: plane.yMm,
-    maxX: plane.xMm + plane.widthMm,
-    maxY: plane.yMm + plane.lengthMm,
-  };
+  const runMm = planRunMm(plane.lengthMm, plane.pitchMicrodeg);
+  if (plane.fall === 'east' || plane.fall === 'west') {
+    return { minX: plane.xMm, minY: plane.yMm, maxX: plane.xMm + runMm, maxY: plane.yMm + plane.widthMm };
+  }
+  return { minX: plane.xMm, minY: plane.yMm, maxX: plane.xMm + plane.widthMm, maxY: plane.yMm + runMm };
 }
 
 export function boundsOverlap(a: Bounds, b: Bounds): boolean {

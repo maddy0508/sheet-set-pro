@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useStore } from '@/data/store';
 import { computeJob } from '@/lib/jobCalc';
@@ -14,9 +14,11 @@ import { MaterialsTab } from './job/MaterialsTab';
 import { CommercialTab } from './job/CommercialTab';
 import { BillingTab } from './job/BillingTab';
 
-type TabId = 'overview' | 'measure' | 'roof' | 'layout' | 'materials' | 'commercial' | 'billing' | 'activity';
+const ModelTab = lazy(() => import('./job/ModelTab').then((module) => ({ default: module.ModelTab })));
 
-const TAB_IDS: TabId[] = ['overview', 'measure', 'roof', 'layout', 'materials', 'commercial', 'billing', 'activity'];
+type TabId = 'overview' | 'measure' | 'roof' | 'model' | 'layout' | 'materials' | 'commercial' | 'billing' | 'activity';
+
+const TAB_IDS: TabId[] = ['overview', 'measure', 'roof', 'model', 'layout', 'materials', 'commercial', 'billing', 'activity'];
 
 export function JobWorkspace() {
   const { jobId = '' } = useParams();
@@ -156,6 +158,7 @@ export function JobWorkspace() {
             { id: 'overview', label: 'Overview' },
             { id: 'measure', label: 'Measure', count: measurements.filter((m) => m.isActive).length },
             { id: 'roof', label: 'Roof', count: planes.length },
+            { id: 'model', label: '3D model', count: planes.length },
             { id: 'layout', label: 'Sheet layout' },
             { id: 'materials', label: 'Materials', count: computation.bom.lines.length },
             { id: 'commercial', label: 'Estimate & quote', count: quotes.length },
@@ -319,6 +322,11 @@ export function JobWorkspace() {
 
           {activeTab === 'measure' && <MeasureTab {...tabProps} />}
           {activeTab === 'roof' && <RoofTab {...tabProps} />}
+          {activeTab === 'model' && (
+            <Suspense fallback={<div className="empty">Loading the 3D model…</div>}>
+              <ModelTab {...tabProps} />
+            </Suspense>
+          )}
           {activeTab === 'layout' && <LayoutTab {...tabProps} />}
           {activeTab === 'materials' && <MaterialsTab {...tabProps} />}
           {activeTab === 'commercial' && <CommercialTab {...tabProps} />}

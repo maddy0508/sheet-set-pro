@@ -24,8 +24,10 @@ import { loadWorkspace, persistStateChange } from './remote';
 import { computeTotals } from '@/domain/pricing';
 import { checkAllocation, checkInvoiceVoid, checkPaymentAmount, decideGst } from '@/domain/commercial';
 import { fingerprint } from '@/domain/units';
+import { planRunMm } from '@/domain/roof3d';
 import { captureInvoiceSnapshot, captureQuoteSnapshot } from '@/lib/document';
 import type { EvidenceKind, FlashingKind, MeasurementGrade, SourceType } from '@/domain/types';
+import type { Flashing } from './types';
 import { normaliseTimestamp } from '@/lib/time';
 
 const STORAGE_KEY = 'sheet-set-pro.state.v1';
@@ -67,7 +69,7 @@ export type Actions = {
   addPlane: (jobId: string, plane: Omit<Plane, 'id' | 'jobId'>) => void;
   updatePlane: (id: string, patch: Partial<Plane>) => void;
   deletePlane: (id: string) => void;
-  upsertFlashing: (jobId: string, kind: FlashingKind, lengthMm: number) => void;
+  upsertFlashing: (jobId: string, kind: FlashingKind, lengthMm: number, source?: Flashing['source']) => void;
   deleteFlashing: (id: string) => void;
   addEvidence: (
     jobId: string,
@@ -355,16 +357,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           ),
         })),
 
-      upsertFlashing: (jobId, kind, lengthMm) =>
+      upsertFlashing: (jobId, kind, lengthMm, source = 'ENTERED') =>
         commit((prev) => {
           const existing = prev.flashings.find((f) => f.jobId === jobId && f.kind === kind);
           if (existing) {
             return {
               ...prev,
-              flashings: prev.flashings.map((f) => (f.id === existing.id ? { ...f, lengthMm, source: 'ENTERED' } : f)),
+              flashings: prev.flashings.map((f) => (f.id === existing.id ? { ...f, lengthMm, source } : f)),
             };
           }
-          return { ...prev, flashings: [...prev.flashings, { id: uid(), jobId, kind, lengthMm, source: 'ENTERED' }] };
+          return { ...prev, flashings: [...prev.flashings, { id: uid(), jobId, kind, lengthMm, source }] };
         }),
 
       deleteFlashing: (id) => commit((prev) => ({ ...prev, flashings: prev.flashings.filter((f) => f.id !== id) })),
@@ -688,8 +690,30 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           const jobId = uid();
           const evidenceId = uid();
           const stamp = nowIso();
-          const planeOne = { id: uid(), jobId, ref: 'P1', xMm: 0, yMm: 0, widthMm: 6000, lengthMm: 3600, pitchMicrodeg: 22_500_000 };
-          const planeTwo = { id: uid(), jobId, ref: 'P2', xMm: 6000, yMm: 0, widthMm: 6000, lengthMm: 3600, pitchMicrodeg: 22_500_000 };
+          // A gable: both planes fall away from the shared ridge line at x = run.
+          const runMm = planRunMm(3600, 22_500_000);
+          const planeOne = {
+            id: uid(),
+            jobId,
+            ref: 'P1',
+            xMm: 0,
+            yMm: 0,
+            widthMm: 6000,
+            lengthMm: 3600,
+            pitchMicrodeg: 22_500_000,
+            fall: 'west' as const,
+          };
+          const planeTwo = {
+            id: uid(),
+            jobId,
+            ref: 'P2',
+            xMm: runMm,
+            yMm: 0,
+            widthMm: 6000,
+            lengthMm: 3600,
+            pitchMicrodeg: 22_500_000,
+            fall: 'east' as const,
+          };
           const measurements = [
             { plane: planeOne, kind: 'plane_width' as const, label: 'P1 eave width', valueMm: 6000 },
             { plane: planeOne, kind: 'plane_length' as const, label: 'P1 rafter length', valueMm: 3600 },

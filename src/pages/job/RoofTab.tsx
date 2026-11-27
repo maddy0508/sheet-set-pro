@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/data/store';
-import { roofExtent } from '@/domain/geometry';
-import { degToMicro, formatAreaM2, formatMm, microToDeg } from '@/domain/units';
+import { planeAreaMm2 } from '@/domain/geometry';
+import { asRoofPlane, buildRoofModel } from '@/domain/roof3d';
+import { cosMicro } from '@/domain/trig';
+import { degToMicro, formatAreaM2, formatMm, microToDeg, mulDivRound } from '@/domain/units';
 import type { FlashingKind } from '@/domain/types';
 import { labelForFlashing } from '@/domain/material';
 import { Badge, Card, Field, Notice, SelectInput, TextInput, UnitInput } from '@/ui';
+import { ROOF_EDGE_CSS as EDGE_COLOUR } from '@/ui/roofColours';
 import { IconAlert, IconCheck, IconPlus, IconRuler } from '@/ui/icons';
 import type { JobTabProps } from './types';
 
@@ -21,24 +24,34 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
-  const [manual, setManual] = useState({ width: '6000', length: '3600', pitch: '22.5' });
+  const [manual, setManual] = useState<{ width: string; length: string; pitch: string; fall: 'north' | 'south' | 'east' | 'west' }>({
+    width: '6000',
+    length: '3600',
+    pitch: '22.5',
+    fall: 'south',
+  });
   const [flashingDraft, setFlashingDraft] = useState<{ kind: FlashingKind; length: string }>({ kind: 'ridge', length: '6000' });
 
+  // The plan is drawn from the same model the 3D view and the calculations use.
+  const model = useMemo(() => buildRoofModel(planes.map(asRoofPlane)), [planes]);
+
   const extent = useMemo(() => {
-    const raw = roofExtent(planes);
+    const { minXMm, minYMm, maxXMm, maxYMm } = model.bounds;
     return {
-      widthMm: Math.max(raw.widthMm, MIN_EXTENT_MM),
-      heightMm: Math.max(raw.heightMm, MIN_EXTENT_MM * 0.55),
+      minXMm,
+      minYMm,
+      widthMm: Math.max(maxXMm - minXMm, MIN_EXTENT_MM),
+      heightMm: Math.max(maxYMm - minYMm, MIN_EXTENT_MM * 0.55),
     };
-  }, [planes]);
+  }, [model]);
 
   const transform: Transform = useMemo(() => {
     const padding = 54;
     const scale = Math.min((size.width - padding * 2) / extent.widthMm, (size.height - padding * 2) / extent.heightMm);
     return {
       scale,
-      offsetX: padding + (size.width - padding * 2 - extent.widthMm * scale) / 2,
-      offsetY: padding + (size.height - padding * 2 - extent.heightMm * scale) / 2,
+      offsetX: padding + (size.width - padding * 2 - extent.widthMm * scale) / 2 - extent.minXMm * scale,
+      offsetY: padding + (size.height - padding * 2 - extent.heightMm * scale) / 2 - extent.minYMm * scale,
     };
   }, [size, extent]);
 
@@ -69,14 +82,14 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
     // 1 m grid
     ctx.strokeStyle = 'rgba(255,255,255,0.045)';
     ctx.lineWidth = 1;
-    for (let mm = 0; mm <= extent.widthMm + 1000; mm += 1000) {
+    for (let mm = extent.minXMm; mm <= extent.minXMm + extent.widthMm + 1000; mm += 1000) {
       const x = transform.offsetX + toPx(mm);
       ctx.beginPath();
       ctx.moveTo(x, transform.offsetY);
       ctx.lineTo(x, transform.offsetY + toPx(extent.heightMm));
       ctx.stroke();
     }
-    for (let mm = 0; mm <= extent.heightMm + 1000; mm += 1000) {
+    for (let mm = extent.minYMm; mm <= extent.minYMm + extent.heightMm + 1000; mm += 1000) {
       const y = transform.offsetY + toPx(mm);
       ctx.beginPath();
       ctx.moveTo(transform.offsetX, y);
@@ -84,29 +97,42 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
       ctx.stroke();
     }
 
-    for (const plane of planes) {
-      const x = transform.offsetX + toPx(plane.xMm);
-      const y = transform.offsetY + toPx(plane.yMm);
-      const w = toPx(plane.widthMm);
-      const h = toPx(plane.lengthMm);
-      const isSelected = plane.id === selectedId;
+    for (const surface of model.surfaces) {
+      const isSelected = surface.id === selectedId;
+      const path = surface.corners.map((corner) => ({
+        x: transform.offsetX + toPx(corner.xMm),
+        y: transform.offsetY + toPx(corner.yMm),
+      }));
 
-      const gradient = ctx.createLinearGradient(x, y, x + w, y + h);
+      ctx.beginPath();
+      path.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
+      ctx.closePath();
+      const gradient = ctx.createLinearGradient(path[0].x, path[0].y, path[2].x, path[2].y);
       gradient.addColorStop(0, isSelected ? 'rgba(53,208,228,0.30)' : 'rgba(88,120,150,0.26)');
       gradient.addColorStop(1, isSelected ? 'rgba(53,208,228,0.12)' : 'rgba(50,74,96,0.20)');
       ctx.fillStyle = gradient;
-      ctx.fillRect(x, y, w, h);
-
+      ctx.fill();
       ctx.strokeStyle = isSelected ? '#55dcee' : 'rgba(198,209,220,0.55)';
       ctx.lineWidth = isSelected ? 2 : 1.2;
-      ctx.strokeRect(x, y, w, h);
+      ctx.stroke();
 
+      const labelX = path.reduce((sum, point) => sum + point.x, 0) / path.length;
+      const labelY = path.reduce((sum, point) => sum + point.y, 0) / path.length;
       ctx.fillStyle = isSelected ? '#d9fbff' : '#cfdae4';
       ctx.font = '600 12px Inter, system-ui, sans-serif';
-      ctx.fillText(plane.ref, x + 8, y + 17);
+      ctx.fillText(surface.ref, labelX - 8, labelY);
       ctx.fillStyle = 'rgba(190,205,218,0.72)';
       ctx.font = '11px Inter, system-ui, sans-serif';
-      if (h > 26) ctx.fillText(`${microToDeg(plane.pitchMicrodeg).toFixed(1)}°`, x + 8, y + 32);
+      ctx.fillText(`${microToDeg(surface.pitchMicrodeg).toFixed(1)}°`, labelX - 8, labelY + 14);
+    }
+
+    for (const edge of model.edges) {
+      ctx.strokeStyle = EDGE_COLOUR[edge.kind];
+      ctx.lineWidth = edge.kind === 'eave' || edge.kind === 'barge' ? 1.4 : 2.2;
+      ctx.beginPath();
+      ctx.moveTo(transform.offsetX + toPx(edge.from.xMm), transform.offsetY + toPx(edge.from.yMm));
+      ctx.lineTo(transform.offsetX + toPx(edge.to.xMm), transform.offsetY + toPx(edge.to.yMm));
+      ctx.stroke();
     }
 
     if (draft) {
@@ -122,7 +148,7 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
       ctx.fillStyle = 'rgba(53,208,228,0.10)';
       ctx.fillRect(x, y, w, h);
     }
-  }, [planes, selectedId, draft, size, transform, extent]);
+  }, [model, selectedId, draft, size, transform, extent]);
 
   const toMm = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
@@ -153,15 +179,20 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
   const onPointerUp = () => {
     if (draft) {
       const widthMm = Math.abs(draft.x2 - draft.x1);
-      const lengthMm = Math.abs(draft.y2 - draft.y1);
-      if (widthMm >= 500 && lengthMm >= 500) {
+      const runMm = Math.abs(draft.y2 - draft.y1);
+      if (widthMm >= 500 && runMm >= 500) {
+        const pitchMicrodeg = degToMicro(Number(manual.pitch) || 22.5);
+        // The rectangle drawn on plan is the shadow of the plane, so the slope length is
+        // the run divided by the cosine of the pitch.
+        const lengthMm = Math.max(runMm, mulDivRound(runMm, 1_000_000, Math.max(1, cosMicro(pitchMicrodeg))));
         actions.addPlane(job.id, {
           ref: `P${planes.length + 1}`,
           xMm: Math.min(draft.x1, draft.x2),
           yMm: Math.min(draft.y1, draft.y2),
           widthMm,
           lengthMm,
-          pitchMicrodeg: degToMicro(Number(manual.pitch) || 22.5),
+          pitchMicrodeg,
+          fall: 'south',
         });
       }
     }
@@ -173,14 +204,14 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
     const widthMm = Number(manual.width);
     const lengthMm = Number(manual.length);
     if (!Number.isFinite(widthMm) || !Number.isFinite(lengthMm) || widthMm < 500 || lengthMm < 500) return;
-    const raw = roofExtent(planes);
     actions.addPlane(job.id, {
       ref: `P${planes.length + 1}`,
-      xMm: raw.widthMm === 0 ? 0 : raw.widthMm + 300,
+      xMm: model.bounds.maxXMm === 0 ? 0 : model.bounds.maxXMm + 300,
       yMm: 0,
       widthMm: Math.round(widthMm),
       lengthMm: Math.round(lengthMm),
       pitchMicrodeg: degToMicro(Number(manual.pitch) || 22.5),
+      fall: manual.fall,
     });
   };
 
@@ -239,6 +270,8 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
                     <th className="num">Width</th>
                     <th className="num">Slope length</th>
                     <th className="num">Pitch</th>
+                    <th>Falls</th>
+                    <th className="num">Ridge</th>
                     <th className="num">Area</th>
                     <th />
                   </tr>
@@ -255,7 +288,9 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
                       <td className="num">{plane.widthMm} mm</td>
                       <td className="num">{plane.lengthMm} mm</td>
                       <td className="num">{microToDeg(plane.pitchMicrodeg).toFixed(1)}°</td>
-                      <td className="num">{formatAreaM2(plane.widthMm * plane.lengthMm)}</td>
+                      <td>{plane.fall ?? 'south'}</td>
+                      <td className="num">{formatMm(plane.ridgeWidthMm ?? plane.widthMm)}</td>
+                      <td className="num">{formatAreaM2(planeAreaMm2(plane))}</td>
                       <td className="actions">
                         <button
                           type="button"
@@ -390,8 +425,31 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
                   }
                 />
               </Field>
+              <div className="form-row">
+                <Field label="Falls toward" hint="The eave is the low edge.">
+                  <SelectInput
+                    value={selected.fall ?? 'south'}
+                    onChange={(e) => actions.updatePlane(selected.id, { fall: e.target.value as 'north' | 'south' | 'east' | 'west' })}
+                  >
+                    <option value="south">South</option>
+                    <option value="north">North</option>
+                    <option value="east">East</option>
+                    <option value="west">West</option>
+                  </SelectInput>
+                </Field>
+                <Field label="Ridge width" hint="Narrower than the eave makes a hip end.">
+                  <UnitInput
+                    unit="mm"
+                    value={selected.ridgeWidthMm ?? selected.widthMm}
+                    onChange={(e) => {
+                      const next = Math.max(0, Number(e.target.value) || 0);
+                      actions.updatePlane(selected.id, { ridgeWidthMm: next >= selected.widthMm ? null : Math.round(next) });
+                    }}
+                  />
+                </Field>
+              </div>
               <div className="small faint">
-                Area {formatAreaM2(selected.widthMm * selected.lengthMm)} · measured along the slope.
+                Area {formatAreaM2(planeAreaMm2(selected))} · measured along the slope.
               </div>
             </div>
           ) : (
@@ -437,9 +495,22 @@ export function RoofTab({ job, planes, flashings, computation }: JobTabProps) {
                 <UnitInput unit="mm" value={manual.length} onChange={(e) => setManual({ ...manual, length: e.target.value })} />
               </Field>
             </div>
-            <Field label="Pitch">
-              <UnitInput unit="deg" value={manual.pitch} onChange={(e) => setManual({ ...manual, pitch: e.target.value })} />
-            </Field>
+            <div className="form-row">
+              <Field label="Pitch">
+                <UnitInput unit="deg" value={manual.pitch} onChange={(e) => setManual({ ...manual, pitch: e.target.value })} />
+              </Field>
+              <Field label="Falls toward">
+                <SelectInput
+                  value={manual.fall}
+                  onChange={(e) => setManual({ ...manual, fall: e.target.value as 'north' | 'south' | 'east' | 'west' })}
+                >
+                  <option value="south">South</option>
+                  <option value="north">North</option>
+                  <option value="east">East</option>
+                  <option value="west">West</option>
+                </SelectInput>
+              </Field>
+            </div>
             <button type="button" className="btn btn-secondary" onClick={addManual}>
               <IconRuler size={14} />
               Add plane
