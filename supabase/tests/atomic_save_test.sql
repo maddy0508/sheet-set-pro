@@ -35,7 +35,7 @@ begin
     '{"id":"00000000-0000-4000-8000-000000000001","display_name":"Atomic Test Roofing","abn":"12345678901"}'::jsonb,
     $j${
       "customers": [{
-        "id": "c7c7c7c7-0000-4000-8000-000000000007",
+        "id": "c0000000-0000-4000-8000-000000000001",
         "business_id": "00000000-0000-4000-8000-000000000001",
         "name": "Atomic Customer",
         "contact_name": "", "email": "", "phone": "", "address": "", "notes": "",
@@ -44,9 +44,9 @@ begin
         "updated_at": "2026-11-27T00:00:00.000Z"
       }],
       "jobs": [{
-        "id": "d7d7d7d7-0000-4000-8000-000000000007",
+        "id": "d0000000-0000-4000-8000-000000000001",
         "business_id": "00000000-0000-4000-8000-000000000001",
-        "customer_id": "c7c7c7c7-0000-4000-8000-000000000007",
+        "customer_id": "c0000000-0000-4000-8000-000000000001",
         "job_number": "J-3001",
         "title": "Atomic job",
         "site_address": "",
@@ -58,16 +58,16 @@ begin
         "updated_at": "2026-11-27T00:00:00.000Z"
       }],
       "roof_planes": [{
-        "id": "e7e7e7e7-0000-4000-8000-000000000007",
+        "id": "e0000000-0000-4000-8000-000000000001",
         "business_id": "00000000-0000-4000-8000-000000000001",
-        "job_id": "d7d7d7d7-0000-4000-8000-000000000007",
+        "job_id": "d0000000-0000-4000-8000-000000000001",
         "ref": "P1", "x_mm": 0, "y_mm": 0,
         "width_mm": 6000, "length_mm": 3600, "pitch_microdeg": 22500000
       }],
       "flashings": [{
-        "id": "f7f7f7f7-0000-4000-8000-000000000007",
+        "id": "f0000000-0000-4000-8000-000000000001",
         "business_id": "00000000-0000-4000-8000-000000000001",
-        "job_id": "d7d7d7d7-0000-4000-8000-000000000007",
+        "job_id": "d0000000-0000-4000-8000-000000000001",
         "kind": "ridge", "length_mm": 12000, "source": "ENTERED"
       }]
     }$j$::jsonb,
@@ -100,22 +100,22 @@ select tests.expect_count(
        join public.jobs j on j.customer_id = c.id
        join public.roof_planes p on p.job_id = j.id
        join public.flashings f on f.job_id = j.id
-      where c.id = 'c7c7c7c7-0000-4000-8000-000000000007'
-        and j.id = 'd7d7d7d7-0000-4000-8000-000000000007'
-        and p.id = 'e7e7e7e7-0000-4000-8000-000000000007'
-        and f.id = 'f7f7f7f7-0000-4000-8000-000000000007'$q$,
+      where c.id = 'c0000000-0000-4000-8000-000000000001'
+        and j.id = 'd0000000-0000-4000-8000-000000000001'
+        and p.id = 'e0000000-0000-4000-8000-000000000001'
+        and f.id = 'f0000000-0000-4000-8000-000000000001'$q$,
   1
 );
 
 select tests.expect_count(
   'a record written without an ord column still gets one',
-  $q$select 1 from public.roof_planes where id = 'e7e7e7e7-0000-4000-8000-000000000007' and ord is not null$q$,
+  $q$select 1 from public.roof_planes where id = 'e0000000-0000-4000-8000-000000000001' and ord is not null$q$,
   1
 );
 
 select tests.expect_count(
   'a record written without created_at still gets one',
-  $q$select 1 from public.roof_planes where id = 'e7e7e7e7-0000-4000-8000-000000000007' and created_at is not null$q$,
+  $q$select 1 from public.roof_planes where id = 'e0000000-0000-4000-8000-000000000001' and created_at is not null$q$,
   1
 );
 
@@ -127,34 +127,34 @@ select tests.expect_error(
     null,
     $j${
       "customers": [{
-        "id": "c8c8c8c8-0000-4000-8000-000000000008",
+        "id": "c0000000-0000-4000-8000-000000000002",
         "business_id": "00000000-0000-4000-8000-000000000001",
         "name": "Rolled Back Customer", "contact_name": "", "email": "", "phone": "",
         "address": "", "notes": "", "source_type": "TEST",
         "created_at": "2026-11-27T00:00:00.000Z", "updated_at": "2026-11-27T00:00:00.000Z"
       }],
       "jobs": [{
-        "id": "d8d8d8d8-0000-4000-8000-000000000008",
+        "id": "d0000000-0000-4000-8000-000000000002",
         "business_id": "00000000-0000-4000-8000-000000000001",
-        "customer_id": "c8c8c8c8-0000-4000-8000-000000000008",
+        "customer_id": "c0000000-0000-4000-8000-000000000002",
         "job_number": "J-3002", "title": "Rolled back job", "site_address": "",
         "status": "draft", "notes": "", "source_type": "TEST",
         "profile_id": null, "crs_epsg": null, "operator_approved": false,
         "created_at": "2026-11-27T00:00:00.000Z", "updated_at": "2026-11-27T00:00:00.000Z"
       }],
       "measurement_evidence": [{
-        "id": "a8a8a8a8-0000-4000-8000-000000000008",
+        "id": "a0000000-0000-4000-8000-000000000002",
         "business_id": "00000000-0000-4000-8000-000000000001",
-        "job_id": "d8d8d8d8-0000-4000-8000-000000000008",
+        "job_id": "d0000000-0000-4000-8000-000000000002",
         "source_kind": "manual", "note": "should not survive",
         "accuracy_claim_mm": 5, "accuracy_basis": "operator_estimate", "is_verified": false,
         "created_at": "2026-11-27T00:00:00.000Z"
       }],
       "measurements": [{
-        "id": "b8b8b8b8-0000-4000-8000-000000000008",
+        "id": "b0000000-0000-4000-8000-000000000002",
         "business_id": "00000000-0000-4000-8000-000000000001",
-        "job_id": "d8d8d8d8-0000-4000-8000-000000000008",
-        "evidence_id": "a8a8a8a8-0000-4000-8000-000000000008",
+        "job_id": "d0000000-0000-4000-8000-000000000002",
+        "evidence_id": "a0000000-0000-4000-8000-000000000002",
         "kind": "control_dimension", "label": "Impossible", "value_mm": 0,
         "tolerance_mm": 5, "grade": "ESTIMATE_GRADE", "is_active": true,
         "created_at": "2026-11-27T00:00:00.000Z"
@@ -167,22 +167,22 @@ select tests.expect_error(
 
 select tests.expect_zero(
   'the customer from the rejected save is not in the database',
-  $q$select 1 from public.customers where id = 'c8c8c8c8-0000-4000-8000-000000000008'$q$
+  $q$select 1 from public.customers where id = 'c0000000-0000-4000-8000-000000000002'$q$
 );
 
 select tests.expect_zero(
   'the job from the rejected save is not in the database',
-  $q$select 1 from public.jobs where id = 'd8d8d8d8-0000-4000-8000-000000000008'$q$
+  $q$select 1 from public.jobs where id = 'd0000000-0000-4000-8000-000000000002'$q$
 );
 
 select tests.expect_zero(
   'the evidence from the rejected save is not in the database',
-  $q$select 1 from public.measurement_evidence where id = 'a8a8a8a8-0000-4000-8000-000000000008'$q$
+  $q$select 1 from public.measurement_evidence where id = 'a0000000-0000-4000-8000-000000000002'$q$
 );
 
 select tests.expect_count(
   'the customer written by the successful save is untouched by the rejection',
-  $q$select 1 from public.customers where id = 'c7c7c7c7-0000-4000-8000-000000000007' and name = 'Atomic Customer'$q$,
+  $q$select 1 from public.customers where id = 'c0000000-0000-4000-8000-000000000001' and name = 'Atomic Customer'$q$,
   1
 );
 
@@ -194,7 +194,7 @@ select tests.expect_error(
     '{"display_name":"Should Not Persist","abn":"99999999999"}'::jsonb,
     $j${
       "customers": [{
-        "id": "b9b9b9b9-0000-4000-8000-000000000009",
+        "id": "b0000000-0000-4000-8000-000000000003",
         "business_id": "00000000-0000-4000-8000-000000000001",
         "name": "   ", "contact_name": "", "email": "", "phone": "", "address": "",
         "notes": "", "source_type": "TEST",
@@ -222,43 +222,43 @@ select tests.expect_error(
     null,
     $j${
       "customers": [{
-        "id": "cacacaca-0000-4000-8000-00000000000a",
+        "id": "c0000000-0000-4000-8000-000000000003",
         "business_id": "00000000-0000-4000-8000-000000000001",
         "name": "Inserted Before The Failed Delete", "contact_name": "", "email": "",
         "phone": "", "address": "", "notes": "", "source_type": "TEST",
         "created_at": "2026-11-27T00:00:00.000Z", "updated_at": "2026-11-27T00:00:00.000Z"
       }],
       "jobs": [{
-        "id": "d7d7d7d7-0000-4000-8000-000000000007",
+        "id": "d0000000-0000-4000-8000-000000000001",
         "business_id": "00000000-0000-4000-8000-000000000001",
-        "customer_id": "c7c7c7c7-0000-4000-8000-000000000007",
+        "customer_id": "c0000000-0000-4000-8000-000000000001",
         "job_number": "J-3001", "title": "Atomic job", "site_address": "",
         "status": "measured", "notes": "changed by the save that failed", "source_type": "TEST",
         "profile_id": null, "crs_epsg": null, "operator_approved": false,
         "created_at": "2026-11-27T00:00:00.000Z", "updated_at": "2026-11-27T00:00:00.000Z"
       }]
     }$j$::jsonb,
-    $j${"customers": ["c7c7c7c7-0000-4000-8000-000000000007"]}$j$::jsonb
+    $j${"customers": ["c0000000-0000-4000-8000-000000000001"]}$j$::jsonb
   )$q$,
   'foreign key'
 );
 
 select tests.expect_zero(
   'the customer inserted before the failed delete is not in the database',
-  $q$select 1 from public.customers where id = 'cacacaca-0000-4000-8000-00000000000a'$q$
+  $q$select 1 from public.customers where id = 'c0000000-0000-4000-8000-000000000003'$q$
 );
 
 select tests.expect_count(
   'the job updated before the failed delete keeps its old status and notes',
   $q$select 1 from public.jobs
-      where id = 'd7d7d7d7-0000-4000-8000-000000000007'
+      where id = 'd0000000-0000-4000-8000-000000000001'
         and status = 'draft' and notes = ''$q$,
   1
 );
 
 select tests.expect_count(
   'the customer the failed delete targeted is still there',
-  $q$select 1 from public.customers where id = 'c7c7c7c7-0000-4000-8000-000000000007'$q$,
+  $q$select 1 from public.customers where id = 'c0000000-0000-4000-8000-000000000001'$q$,
   1
 );
 
@@ -269,7 +269,7 @@ select tests.expect_error(
     '00000000-0000-4000-8000-000000000001',
     null,
     '{}'::jsonb,
-    $j${"flashings": ["00000000-0000-4000-8000-0000000000ff"]}$j$::jsonb
+    $j${"flashings": ["f0000000-0000-4000-8000-0000000000ff"]}$j$::jsonb
   )$q$,
   'matched only 0'
 );
@@ -282,7 +282,7 @@ select tests.expect_error(
     null,
     $j${
       "customers": [{
-        "id": "cbcbcbcb-0000-4000-8000-00000000000b",
+        "id": "c0000000-0000-4000-8000-000000000004",
         "business_id": "00000000-0000-4000-8000-000000000002",
         "name": "Trespassing Customer", "contact_name": "", "email": "", "phone": "",
         "address": "", "notes": "", "source_type": "TEST",
@@ -296,7 +296,7 @@ select tests.expect_error(
 
 select tests.expect_zero(
   'the trespassing customer was not written anywhere',
-  $q$select 1 from public.customers where id = 'cbcbcbcb-0000-4000-8000-00000000000b'$q$
+  $q$select 1 from public.customers where id = 'c0000000-0000-4000-8000-000000000004'$q$
 );
 
 select tests.expect_error(
@@ -306,7 +306,7 @@ select tests.expect_error(
     null,
     $j${
       "customers": [{
-        "id": "cccccccc-0000-4000-8000-00000000000c",
+        "id": "c0000000-0000-4000-8000-000000000005",
         "business_id": "00000000-0000-4000-8000-000000000001",
         "name": "Made Up Column", "made_up_column": 1
       }]
