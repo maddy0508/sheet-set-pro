@@ -19,6 +19,12 @@ JWT_SECRET="${SSP_API_JWT_SECRET:-local-development-secret-at-least-32-chars}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PSQL=(sudo -u postgres psql -X -q -v ON_ERROR_STOP=1)
 
+# psql reads the file through this shell, not through the postgres user, so the
+# suite works when the checkout is somewhere that user cannot traverse.
+run_sql() {
+  "${PSQL[@]}" -d "$1" <"$2"
+}
+
 POSTGREST_BIN="${SSP_POSTGREST_BIN:-/tmp/postgrest}"
 if [[ ! -x "${POSTGREST_BIN}" ]]; then
   echo "Fetching PostgREST 12.2.3…"
@@ -31,9 +37,9 @@ fi
 echo "Recreating database ${DB_NAME}…"
 sudo -u postgres dropdb --if-exists "${DB_NAME}"
 sudo -u postgres createdb "${DB_NAME}"
-"${PSQL[@]}" -d "${DB_NAME}" -f "${ROOT}/supabase/tests/local_bootstrap.sql" >/dev/null
+run_sql "${DB_NAME}" "${ROOT}/supabase/tests/local_bootstrap.sql" >/dev/null
 for migration in "${ROOT}"/supabase/migrations/*.sql; do
-  "${PSQL[@]}" -d "${DB_NAME}" -f "${migration}" >/dev/null
+  run_sql "${DB_NAME}" "${migration}" >/dev/null
 done
 
 echo "Preparing the API role…"
