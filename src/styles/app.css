@@ -1283,6 +1283,15 @@ tr.row-clickable {
   background: var(--danger-500);
 }
 
+.sync-chip-offline {
+  color: var(--steel-300);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.sync-chip-offline .sync-dot {
+  background: var(--warn-500);
+}
+
 @keyframes sync-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }

@@ -1,5 +1,6 @@
 import { describeError, requireSupabase } from '@/lib/supabase';
 import { COLLECTION_ORDER, TABLE_PLANS, companyFromRow, companyToRow, diffState } from './persistence';
+import type { SavePayload } from './offline';
 import type { AppState } from './types';
 
 type Row = Record<string, unknown>;
@@ -114,9 +115,17 @@ export async function loadWorkspace(): Promise<AppState> {
  * was saved; a rejection here is a real failure, never something to swallow.
  */
 export async function persistStateChange(previous: AppState, next: AppState): Promise<void> {
-  const client = requireSupabase();
-  const businessId = next.company.id;
+  const payload = buildSavePayload(previous, next);
+  if (!payload) return;
+  await sendSavePayload(payload);
+}
 
+/**
+ * Turns two states into the payload the database function expects, or null when
+ * nothing changed. The same payload is what the offline queue stores and replays.
+ */
+export function buildSavePayload(previous: AppState, next: AppState): SavePayload | null {
+  const businessId = next.company.id;
   const businessChanged = JSON.stringify(previous.company) !== JSON.stringify(next.company);
   const changes = diffState(previous, next, businessId);
 
@@ -128,22 +137,32 @@ export async function persistStateChange(previous: AppState, next: AppState): Pr
     if (change.deletes.length > 0) deletes[change.table] = change.deletes;
   }
 
-  if (!businessChanged && Object.keys(upserts).length === 0 && Object.keys(deletes).length === 0) return;
+  if (!businessChanged && Object.keys(upserts).length === 0 && Object.keys(deletes).length === 0) return null;
 
+  return {
+    businessId,
+    business: businessChanged ? companyToRow(next.company) : null,
+    upserts,
+    deletes,
+  };
+}
+
+export async function sendSavePayload(payload: SavePayload): Promise<void> {
+  const client = requireSupabase();
   const { error } = await client.rpc('save_workspace', {
-    p_business_id: businessId,
-    p_business: businessChanged ? companyToRow(next.company) : null,
-    p_upserts: upserts,
-    p_deletes: deletes,
+    p_business_id: payload.businessId,
+    p_business: payload.business,
+    p_upserts: payload.upserts,
+    p_deletes: payload.deletes,
   });
 
   if (error) {
     // Name the parts of the save so a refusal points at the records it was writing;
     // the database's own message says why.
     const scope = [
-      ...(businessChanged ? ['business settings'] : []),
-      ...Object.keys(upserts),
-      ...Object.keys(deletes),
+      ...(payload.business ? ['business settings'] : []),
+      ...Object.keys(payload.upserts),
+      ...Object.keys(payload.deletes),
     ];
     return fail(`Saving the workspace (${scope.join(', ')})`, error);
   }

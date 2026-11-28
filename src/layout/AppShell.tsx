@@ -37,18 +37,58 @@ function crumbsFor(pathname: string, jobs: { id: string; jobNumber: string; titl
 }
 
 type SyncChipProps = {
-  sync: { status: 'loading' | 'ready' | 'saving' | 'error'; lastSavedAt: string | null };
+  sync: {
+    status: 'loading' | 'ready' | 'saving' | 'error';
+    lastSavedAt: string | null;
+    offline: boolean;
+    pending: number;
+    savedCopyAt: string | null;
+  };
 };
 
 function SyncChip({ sync }: SyncChipProps) {
+  const pending = sync.pending;
+
+  if (sync.status === 'error') {
+    return (
+      <span className="sync-chip sync-chip-error" title="A change was refused. See the notice below.">
+        <span className="sync-dot" />
+        Save failed
+      </span>
+    );
+  }
+
+  if (sync.offline) {
+    return (
+      <span
+        className="sync-chip sync-chip-offline"
+        title={
+          pending > 0
+            ? `${pending} change${pending === 1 ? '' : 's'} saved on this device and will be sent when the connection returns.`
+            : 'Working from the copy saved on this device.'
+        }
+      >
+        <span className="sync-dot" />
+        {pending > 0 ? `Offline · ${pending} queued` : 'Offline · saved copy'}
+      </span>
+    );
+  }
+
+  if (pending > 0) {
+    return (
+      <span className="sync-chip sync-chip-saving" title={`${pending} change${pending === 1 ? '' : 's'} waiting to be sent.`}>
+        <span className="sync-dot" />
+        {`Sending ${pending}…`}
+      </span>
+    );
+  }
+
   const label =
     sync.status === 'saving'
       ? 'Saving…'
-      : sync.status === 'error'
-        ? 'Save failed'
-        : sync.lastSavedAt
-          ? `Saved ${new Date(sync.lastSavedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}`
-          : 'Connected';
+      : sync.lastSavedAt
+        ? `Saved ${new Date(sync.lastSavedAt).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}`
+        : 'Connected';
 
   return (
     <span className={`sync-chip sync-chip-${sync.status}`} title="Records are stored in Supabase">
@@ -151,6 +191,25 @@ export function AppShell() {
         </header>
 
         <main className="content">
+          {sync.offline && sync.mode === 'remote' && (
+            <div className="notice notice-info sync-error" role="status">
+              <div>
+                <strong>Working offline</strong>
+                <p>
+                  {sync.pending > 0
+                    ? `${sync.pending} change${sync.pending === 1 ? '' : 's'} saved on this device and will be sent when the connection returns.`
+                    : sync.savedCopyAt
+                      ? `Showing the workspace copy saved on this device at ${new Date(sync.savedCopyAt).toLocaleString('en-AU')}.`
+                      : 'Showing the workspace copy saved on this device.'}
+                </p>
+              </div>
+              <div className="sync-error-actions">
+                <button type="button" className="btn btn-secondary btn-sm" onClick={sync.retry}>
+                  Try sending now
+                </button>
+              </div>
+            </div>
+          )}
           {sync.error && (
             <div className="notice notice-danger sync-error" role="alert">
               <div>

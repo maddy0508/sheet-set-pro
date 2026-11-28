@@ -20,7 +20,19 @@ import type {
 } from './types';
 import { createInitialState } from './seed';
 import { isSupabaseConfigured } from '@/lib/supabase';
-import { loadWorkspace, persistStateChange } from './remote';
+import { buildSavePayload, loadWorkspace, sendSavePayload } from './remote';
+import {
+  browserStore,
+  describeFailure,
+  drainOutbox,
+  enqueue,
+  isNetworkFailure,
+  isOnline,
+  readCache,
+  readOutbox,
+  writeCache,
+} from './offline';
+import type { SavePayload } from './offline';
 import { computeTotals } from '@/domain/pricing';
 import { checkAllocation, checkInvoiceVoid, checkPaymentAmount, decideGst } from '@/domain/commercial';
 import { fingerprint } from '@/domain/units';
@@ -131,6 +143,12 @@ export type SyncState = {
   status: 'loading' | 'ready' | 'saving' | 'error';
   error: string | null;
   lastSavedAt: string | null;
+  /** The device has no connection, so the screen is showing the saved copy. */
+  offline: boolean;
+  /** Changes accepted on this device that have not reached the database yet. */
+  pending: number;
+  /** When the device copy was last written. */
+  savedCopyAt: string | null;
 };
 
 type StoreValue = {
@@ -155,21 +173,60 @@ function emptyState(): AppState {
   };
 }
 
+type Boot = { state: AppState; sync: SyncState };
+
+/**
+ * The device copy is shown immediately, so a job opened in a roof cavity or a
+ * basement does not wait for a connection that is not there. The database is
+ * still read in the background and replaces it when it answers.
+ */
+function bootState(): Boot {
+  if (!isSupabaseConfigured) {
+    return {
+      state: load(),
+      sync: {
+        mode: 'local',
+        status: 'ready',
+        error: null,
+        lastSavedAt: null,
+        offline: false,
+        pending: 0,
+        savedCopyAt: null,
+      },
+    };
+  }
+
+  const store = browserStore();
+  const cached = readCache(store);
+  const pending = readOutbox(store).length;
+
+  return {
+    state: cached ? cached.state : emptyState(),
+    sync: {
+      mode: 'remote',
+      status: cached ? 'ready' : 'loading',
+      error: null,
+      lastSavedAt: null,
+      offline: !isOnline(),
+      pending,
+      savedCopyAt: cached?.savedAt ?? null,
+    },
+  };
+}
+
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const [state, applyState] = useState<AppState>(() => (isSupabaseConfigured ? emptyState() : load()));
+  const [boot] = useState(bootState);
+  const [state, applyState] = useState<AppState>(boot.state);
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  const [sync, setSync] = useState<SyncState>(() => ({
-    mode: isSupabaseConfigured ? 'remote' : 'local',
-    status: isSupabaseConfigured ? 'loading' : 'ready',
-    error: null,
-    lastSavedAt: null,
-  }));
+  const [sync, setSync] = useState<SyncState>(boot.sync);
 
   const [reloadToken, setReloadToken] = useState(0);
   const writeSequence = useRef(0);
   const writeQueue = useRef<Promise<void>>(Promise.resolve());
+  const deviceStore = useRef(browserStore());
+  const draining = useRef(false);
 
   useEffect(() => {
     if (isSupabaseConfigured) return;
@@ -180,17 +237,96 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [state]);
 
+  /** Replays queued changes oldest first; stops at the first transport failure. */
+  const drain = useCallback(async () => {
+    const store = deviceStore.current;
+    if (!isSupabaseConfigured || !store || draining.current) return;
+    if (readOutbox(store).length === 0) return;
+
+    draining.current = true;
+    setSync((current) => ({ ...current, status: 'saving', error: null }));
+    try {
+      const outcome = await drainOutbox(store, sendSavePayload);
+      const savedAt = writeCache(store, stateRef.current);
+
+      if (outcome.refusals.length > 0) {
+        const detail = outcome.refusals.map((refusal) => `${refusal.label}: ${refusal.reason}`).join(' ');
+        setSync((current) => ({
+          ...current,
+          status: 'error',
+          error: `The database refused a queued change. ${detail}`,
+          pending: outcome.remaining.length,
+          offline: outcome.offline,
+          savedCopyAt: savedAt ?? current.savedCopyAt,
+        }));
+        // Nothing is left to replay: show what the database really holds.
+        if (outcome.remaining.length === 0) {
+          loadWorkspace()
+            .then((loaded) => {
+              stateRef.current = loaded;
+              applyState(loaded);
+            })
+            .catch(() => undefined);
+        }
+        return;
+      }
+
+      if (outcome.offline) {
+        setSync((current) => ({
+          ...current,
+          status: 'ready',
+          error: null,
+          offline: true,
+          pending: outcome.remaining.length,
+          savedCopyAt: savedAt ?? current.savedCopyAt,
+        }));
+        return;
+      }
+
+      const lastSavedAt = new Date().toISOString();
+      setSync((current) => ({
+        ...current,
+        status: 'ready',
+        error: null,
+        offline: false,
+        pending: 0,
+        lastSavedAt,
+        savedCopyAt: savedAt ?? current.savedCopyAt,
+      }));
+    } finally {
+      draining.current = false;
+    }
+  }, []);
+
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     let cancelled = false;
-    setSync((current) => ({ ...current, status: 'loading', error: null }));
+    // A device copy is already on screen: refreshing must not blank it.
+    setSync((current) =>
+      current.savedCopyAt ? { ...current, error: null } : { ...current, status: 'loading', error: null },
+    );
 
     loadWorkspace()
       .then((loaded) => {
         if (cancelled) return;
+        const queued = readOutbox(deviceStore.current);
+        if (queued.length > 0) {
+          // Queued changes are newer than the database and are replayed next.
+          setSync((current) => ({ ...current, status: 'ready', error: null, offline: !isOnline(), pending: queued.length }));
+          void drain();
+          return;
+        }
         stateRef.current = loaded;
         applyState(loaded);
-        setSync((current) => ({ ...current, status: 'ready', error: null }));
+        const savedAt = writeCache(deviceStore.current, loaded);
+        setSync((current) => ({
+          ...current,
+          status: 'ready',
+          error: null,
+          offline: !isOnline(),
+          pending: 0,
+          savedCopyAt: savedAt ?? current.savedCopyAt,
+        }));
         // A browser that previously ran in local mode still holds a device-only copy.
         // Once the shared workspace has answered, that copy is stale and unmanaged.
         try {
@@ -201,60 +337,159 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       })
       .catch((error: unknown) => {
         if (cancelled) return;
+        const cached = readCache(deviceStore.current);
+        if (cached && isNetworkFailure(error)) {
+          // Offline with a device copy is a working state, not an error.
+          setSync((current) => ({
+            ...current,
+            status: 'ready',
+            error: null,
+            offline: true,
+            savedCopyAt: cached.savedAt,
+            pending: readOutbox(deviceStore.current).length,
+          }));
+          return;
+        }
         setSync((current) => ({
           ...current,
           status: 'error',
-          error: error instanceof Error ? error.message : String(error),
+          error: describeFailure(error),
+          offline: isNetworkFailure(error),
         }));
       });
 
     return () => {
       cancelled = true;
     };
-  }, [reloadToken]);
+  }, [drain, reloadToken]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const handleOnline = () => {
+      setSync((current) => ({ ...current, offline: false }));
+      void drain();
+    };
+    const handleOffline = () => setSync((current) => ({ ...current, offline: true }));
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [drain]);
+
+  useEffect(() => {
+    // Retrying on a timer covers a database that was briefly unreachable while the
+    // device stayed online; a browser that goes offline resumes on the online event.
+    if (!isSupabaseConfigured || sync.pending === 0) return;
+    const timer = window.setInterval(() => void drain(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [drain, sync.pending]);
 
   /**
-   * Applies a change immediately, then writes it. A rejected write restores the
-   * previous state and says so: the operator never sees a save that did not happen.
+   * Sends one change: straight to the database when it is reachable and nothing
+   * is already waiting, otherwise appended to the queue so order is preserved.
    */
-  const commit = useCallback((updater: (previous: AppState) => AppState) => {
-    const before = stateRef.current;
-    const after = updater(before);
-    if (after === before) return;
+  const deliver = useCallback(async (before: AppState, payload: SavePayload, ticket: number) => {
+    const store = deviceStore.current;
+    const queued = readOutbox(store);
+    const online = isOnline();
 
-    stateRef.current = after;
-    applyState(after);
+    if (queued.length > 0 || !online) {
+      const queue = enqueue(store, payload);
+      const savedAt = writeCache(store, stateRef.current);
+      setSync((current) => ({
+        ...current,
+        status: 'ready',
+        error: null,
+        offline: !online,
+        pending: queue.length,
+        savedCopyAt: savedAt ?? current.savedCopyAt,
+      }));
+      return;
+    }
 
-    if (!isSupabaseConfigured) return;
+    try {
+      await sendSavePayload(payload);
+      const savedAt = writeCache(store, stateRef.current);
+      setSync((current) =>
+        ticket === writeSequence.current
+          ? {
+              ...current,
+              status: 'ready',
+              error: null,
+              offline: false,
+              pending: 0,
+              lastSavedAt: new Date().toISOString(),
+              savedCopyAt: savedAt ?? current.savedCopyAt,
+            }
+          : current,
+      );
+    } catch (error) {
+      if (isNetworkFailure(error)) {
+        // The change is kept on this device and sent when the connection returns.
+        const queue = enqueue(store, payload);
+        const savedAt = writeCache(store, stateRef.current);
+        setSync((current) => ({
+          ...current,
+          status: 'ready',
+          error: null,
+          offline: true,
+          pending: queue.length,
+          savedCopyAt: savedAt ?? current.savedCopyAt,
+        }));
+        return;
+      }
 
-    const ticket = ++writeSequence.current;
-    setSync((current) => ({ ...current, status: 'saving', error: null }));
-
-    writeQueue.current = writeQueue.current
-      .then(() => persistStateChange(before, after))
-      .then(() => {
-        if (ticket !== writeSequence.current) return;
-        setSync((current) => ({ ...current, status: 'ready', lastSavedAt: new Date().toISOString() }));
-      })
-      .catch((error: unknown) => {
-        if (ticket === writeSequence.current) {
-          stateRef.current = before;
-          applyState(before);
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        setSync((current) => ({ ...current, status: 'error', error: message }));
-        // The save is one transaction, so nothing was written; re-read anyway so the
-        // screen shows what the database holds rather than what we hoped it held.
-        loadWorkspace()
-          .then((loaded) => {
-            stateRef.current = loaded;
-            applyState(loaded);
-          })
-          .catch(() => undefined);
-      });
+      if (ticket === writeSequence.current) {
+        stateRef.current = before;
+        applyState(before);
+      }
+      setSync((current) => ({ ...current, status: 'error', error: describeFailure(error) }));
+      // The save is one transaction, so nothing was written; re-read anyway so the
+      // screen shows what the database holds rather than what we hoped it held.
+      loadWorkspace()
+        .then((loaded) => {
+          stateRef.current = loaded;
+          applyState(loaded);
+        })
+        .catch(() => undefined);
+    }
   }, []);
 
-  const retry = useCallback(() => setReloadToken((token) => token + 1), []);
+  /**
+   * Applies a change immediately, then writes it. A transport failure keeps the
+   * change and queues it; a refusal restores the previous state and says so, so
+   * the operator never sees a save that did not happen.
+   */
+  const commit = useCallback(
+    (updater: (previous: AppState) => AppState) => {
+      const before = stateRef.current;
+      const after = updater(before);
+      if (after === before) return;
+
+      stateRef.current = after;
+      applyState(after);
+
+      if (!isSupabaseConfigured) return;
+
+      const payload = buildSavePayload(before, after);
+      if (!payload) return;
+
+      const ticket = ++writeSequence.current;
+      setSync((current) => ({ ...current, status: 'saving', error: null }));
+
+      writeQueue.current = writeQueue.current
+        .then(() => deliver(before, payload, ticket))
+        .catch(() => undefined);
+    },
+    [deliver],
+  );
+
+  const retry = useCallback(() => {
+    void drain();
+    setReloadToken((token) => token + 1);
+  }, [drain]);
   const dismissError = useCallback(() => setSync((current) => ({ ...current, status: 'ready', error: null })), []);
 
   const actions = useMemo<Actions>(() => {

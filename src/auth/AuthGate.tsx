@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import type { ReactNode } from 'react';
 import { describeError, isSupabaseConfigured, supabase } from '@/lib/supabase';
 import { claimWorkspace, fetchWorkspaceStatus, signIn, signOut } from '@/data/remote';
+import { browserStore, clearCache, isNetworkFailure, readCache, readOutbox, writeOutbox } from '@/data/offline';
 import { LogoMark } from '@/ui/icons';
 
 type Phase =
@@ -66,6 +67,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
       }
       setPhase({ kind: 'member', email: user.email ?? '' });
     } catch (error) {
+      // A member who is already signed in keeps working from the device copy when the
+      // connection is what failed: refusing them would strand the job on site.
+      if (isNetworkFailure(error) && readCache(browserStore())) {
+        setPhase({ kind: 'member', email: user.email ?? '' });
+        return;
+      }
       setPhase({ kind: 'unreachable', error: error instanceof Error ? error.message : String(error) });
     }
   }, []);
@@ -111,10 +118,23 @@ export function AuthGate({ children }: { children: ReactNode }) {
   };
 
   const handleSignOut = async () => {
+    const store = browserStore();
+    const pending = readOutbox(store).length;
+    if (
+      pending > 0 &&
+      !window.confirm(
+        `${pending} change${pending === 1 ? ' is' : 's are'} still waiting to be sent. Signing out deletes them from this device. Sign out anyway?`,
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       await signOut();
     } finally {
+      // Customer records must not stay readable on a signed-out device.
+      clearCache(store);
+      writeOutbox(store, []);
       setBusy(false);
       await resolve();
     }
