@@ -86,6 +86,20 @@ This is offline operation on one device against the shared database; it is not m
 conflict resolution. Two devices changing the same record while both are offline resolve
 last-write-wins when the second one replays.
 
+### Installing it on a phone or tablet
+
+The production build carries a web app manifest, icons and a service worker (`public/sw.js`), so a
+browser offers to install Sheet Set Pro to the home screen and the installed app opens with no
+network at all, not just with cached data.
+
+- Navigation is **network first** — a new deployment replaces the cached `index.html` immediately,
+  and a proxy error page is never treated as the application.
+- Hashed bundles are **cache first**, because their names change with their content.
+- Cross-origin requests (the database) are never cached; the queue decides what happens when they
+  fail.
+- The worker is registered in production builds only, so it cannot serve stale modules while
+  editing.
+
 ## Storage (local mode)
 
 Without Supabase configuration the build persists to the browser's local storage on the device. It
