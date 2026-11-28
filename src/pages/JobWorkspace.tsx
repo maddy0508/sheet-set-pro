@@ -9,6 +9,7 @@ import { IconAlert, IconArrowLeft, IconCheck } from '@/ui/icons';
 import type { JobStatus } from '@/data/types';
 import { MeasureTab } from './job/MeasureTab';
 import { RoofTab } from './job/RoofTab';
+import { AerialTab } from './job/AerialTab';
 import { LayoutTab } from './job/LayoutTab';
 import { MaterialsTab } from './job/MaterialsTab';
 import { OrderTab } from './job/OrderTab';
@@ -21,6 +22,7 @@ type TabId =
   | 'overview'
   | 'measure'
   | 'roof'
+  | 'aerial'
   | 'model'
   | 'layout'
   | 'materials'
@@ -33,6 +35,7 @@ const TAB_IDS: TabId[] = [
   'overview',
   'measure',
   'roof',
+  'aerial',
   'model',
   'layout',
   'materials',
@@ -180,6 +183,7 @@ export function JobWorkspace() {
             { id: 'overview', label: 'Overview' },
             { id: 'measure', label: 'Measure', count: measurements.filter((m) => m.isActive).length },
             { id: 'roof', label: 'Roof', count: planes.length },
+            { id: 'aerial', label: 'Aerial & AI' },
             { id: 'model', label: '3D model', count: planes.length },
             { id: 'layout', label: 'Sheet layout' },
             { id: 'materials', label: 'Materials', count: computation.bom.lines.length },
@@ -349,6 +353,7 @@ export function JobWorkspace() {
 
           {activeTab === 'measure' && <MeasureTab {...tabProps} />}
           {activeTab === 'roof' && <RoofTab {...tabProps} />}
+          {activeTab === 'aerial' && <AerialTab job={job} />}
           {activeTab === 'model' && (
             <Suspense fallback={<div className="empty">Loading the 3D model…</div>}>
               <ModelTab {...tabProps} />

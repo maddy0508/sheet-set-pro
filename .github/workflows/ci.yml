@@ -90,6 +90,25 @@ jobs:
       - name: Audit production and development dependencies
         run: npm audit --audit-level=high
 
+  ai-service:
+    name: ai service tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Fetch the commit
+        run: |
+          git init --quiet repo
+          cd repo
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch --quiet --depth 1 origin "${{ github.event.pull_request.head.sha || github.sha }}"
+          git checkout --quiet FETCH_HEAD
+      - name: Show the interpreter
+        run: python3 --version
+      # Standard library only: no pip install, so the job cannot fail on a network blip.
+      - name: Geometry and contract tests
+        working-directory: repo
+        run: python3 -m unittest discover -s ai-service/tests -t ai-service -v
+
   database:
     name: database integrity
     runs-on: ubuntu-24.04

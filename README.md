@@ -128,3 +128,24 @@ cyan accent. No other palette is substituted.
 Payroll, rostering, crew management, customer portal, multi-tenant SaaS, general ledger, bank
 reconciliation, BAS lodgement, structural engineering, and machine/manufacturing integration.
 Aerial imagery, AI recognition, LiDAR and AR are deferred until licensing and hardware access exist.
+
+## Aerial capture and AI analysis
+
+The job workspace has an **Aerial & AI** tab: load an aerial image (a file, or an imagery
+export URL), let the local AI service propose candidate buildings and roofs, choose the right
+one, state the image resolution, and read the plan area and perimeter.
+
+- The service is optional. `VITE_AI_SERVICE_URL` points at a local service; when that service
+  or one of its models is missing, the tab says which model is missing and manual capture
+  continues to work.
+- Models run locally (Qwen3-VL-8B-Instruct through llama.cpp, GroundingDINO, SAM 2.1). See
+  `ai-service/README.md` for installation, weights and the performance you should expect.
+- A proposal is not a measurement. Imagery becomes metres only through a resolution the
+  operator declares, or through control points; the transform, residuals and quality grade
+  are in `src/domain/geo.ts`. Aerial evidence is recorded as **estimate grade** and can never
+  raise a job to order grade, which still needs an on-site measurement.
+- Plan area only: pitch is applied per plane in the Roof tab, so a hipped and a gabled section
+  are never averaged into one slope factor.
+
+Tests: `python3 -m unittest discover -s ai-service/tests -t ai-service` (service geometry and
+contract) and `npm test` (client, georeferencing, measurement).
