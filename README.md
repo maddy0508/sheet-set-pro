@@ -66,6 +66,26 @@ change set — business settings, upserts and deletes — travels in a single ca
 rejected write restores the previous state and reports the failure, and the database is re-read so
 the screen always matches what was actually stored.
 
+### Working offline
+
+The signed-in device keeps a copy of the workspace, so the application opens without a connection
+and shows the records it last saw rather than an empty screen.
+
+- A change made without a connection — or while the database cannot be reached — is applied on the
+  device and queued. The header shows `Offline · N queued` and how many changes are waiting.
+- Queued changes are replayed oldest first as soon as the connection returns, on the browser's
+  `online` event, on a retry button, and on a 15-second timer while anything is waiting. Each queued
+  entry is the same diff the online path sends, so order and content are unchanged.
+- A **transport failure** (no connection, timeout, proxy outage) keeps the change and retries it. A
+  **database refusal** (constraint, permission, immutability rule) drops that one change, reports it,
+  and continues with the rest — retrying it unchanged could never succeed.
+- Signing out deletes the device copy and any queued changes, after confirming if anything is
+  unsent. Customer records are not left readable on a signed-out device.
+
+This is offline operation on one device against the shared database; it is not multi-device
+conflict resolution. Two devices changing the same record while both are offline resolve
+last-write-wins when the second one replays.
+
 ## Storage (local mode)
 
 Without Supabase configuration the build persists to the browser's local storage on the device. It
